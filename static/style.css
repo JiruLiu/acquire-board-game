@@ -509,11 +509,24 @@ button:disabled {
 .status-panel,
 .found-panel,
 .acquire-order-panel,
+.copy-link-panel,
 .share-panel,
 .holdings-panel,
 .buying-panel,
 .trade-panel {
   padding: 0.75vw 0.9vw 0.9vw;
+}
+
+.copy-link-panel {
+  margin-top: 0.45vw;
+}
+
+.copy-link-button {
+  width: 100%;
+  padding: 0.45vw 0.6vw;
+  color: white;
+  font-size: 0.66vw;
+  letter-spacing: 0.01em;
 }
 
 .buying-panel {
@@ -1219,6 +1232,7 @@ button:disabled {
 
   .buying-count,
   .buying-total,
+  .copy-link-button,
   .buying-row,
   .buy-button,
   .trade-player,

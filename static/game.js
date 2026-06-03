@@ -13,6 +13,7 @@ const state = {
   tradeSelection: { sell: 0, trade: 0 },
   acquireOrder: [],
   statusHistory: [],
+  copyLinkResetTimer: null,
 };
 
 const socket = io();
@@ -24,6 +25,7 @@ const elements = {
   placeButton: document.getElementById("place-button"),
   finishButton: document.getElementById("finish-button"),
   holdingsBody: document.getElementById("holdings-body"),
+  copyLinkButton: document.getElementById("copy-link-button"),
   buyingPanel: document.getElementById("buying-panel"),
   buyingOptions: document.getElementById("buying-options"),
   buyingCount: document.getElementById("buying-count"),
@@ -57,6 +59,177 @@ const elements = {
   endingWinner: document.getElementById("ending-winner"),
   endingRankings: document.getElementById("ending-rankings"),
 };
+
+let audioContext = null;
+
+function getAudioContext() {
+  if (audioContext) {
+    return audioContext;
+  }
+  const Context = window.AudioContext || window.webkitAudioContext;
+  if (!Context) {
+    return null;
+  }
+  audioContext = new Context();
+  return audioContext;
+}
+
+function unlockAudio() {
+  const context = getAudioContext();
+  if (!context || context.state !== "suspended") {
+    return;
+  }
+  context.resume().catch(() => {});
+}
+
+function scheduleTone(context, {
+  type = "sine",
+  frequency,
+  endFrequency = frequency,
+  start,
+  duration,
+  gain = 0.08,
+  attack = 0.01,
+  release = 0.08,
+}) {
+  const oscillator = context.createOscillator();
+  const amplifier = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  oscillator.frequency.exponentialRampToValueAtTime(
+    Math.max(1, endFrequency),
+    start + duration
+  );
+  amplifier.gain.setValueAtTime(0.0001, start);
+  amplifier.gain.exponentialRampToValueAtTime(gain, start + attack);
+  amplifier.gain.exponentialRampToValueAtTime(0.0001, start + duration + release);
+  oscillator.connect(amplifier);
+  amplifier.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + release + 0.02);
+}
+
+function playSound(recipe) {
+  const context = getAudioContext();
+  if (!context || context.state !== "running") {
+    return;
+  }
+  const start = context.currentTime + 0.01;
+  recipe(context, start);
+}
+
+function playMoneyDeductSound() {
+  playSound((context, start) => {
+    scheduleTone(context, {
+      type: "square",
+      frequency: 820,
+      endFrequency: 660,
+      start,
+      duration: 0.08,
+      gain: 0.035,
+      attack: 0.004,
+      release: 0.035,
+    });
+    scheduleTone(context, {
+      type: "square",
+      frequency: 640,
+      endFrequency: 430,
+      start: start + 0.06,
+      duration: 0.12,
+      gain: 0.04,
+      attack: 0.004,
+      release: 0.05,
+    });
+  });
+}
+
+function playMoneyIncomingSound() {
+  playSound((context, start) => {
+    scheduleTone(context, {
+      type: "triangle",
+      frequency: 420,
+      endFrequency: 620,
+      start,
+      duration: 0.09,
+      gain: 0.04,
+      attack: 0.005,
+      release: 0.04,
+    });
+    scheduleTone(context, {
+      type: "triangle",
+      frequency: 620,
+      endFrequency: 880,
+      start: start + 0.08,
+      duration: 0.12,
+      gain: 0.045,
+      attack: 0.005,
+      release: 0.06,
+    });
+    scheduleTone(context, {
+      type: "sine",
+      frequency: 930,
+      endFrequency: 1220,
+      start: start + 0.16,
+      duration: 0.16,
+      gain: 0.03,
+      attack: 0.006,
+      release: 0.09,
+    });
+  });
+}
+
+function playCelebrateSound() {
+  playSound((context, start) => {
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    for (const [index, note] of notes.entries()) {
+      scheduleTone(context, {
+        type: "triangle",
+        frequency: note,
+        endFrequency: note * 1.02,
+        start: start + (index * 0.06),
+        duration: 0.16,
+        gain: 0.04,
+        attack: 0.005,
+        release: 0.08,
+      });
+    }
+  });
+}
+
+function playAcquireImpactSound() {
+  playSound((context, start) => {
+    scheduleTone(context, {
+      type: "sawtooth",
+      frequency: 180,
+      endFrequency: 72,
+      start,
+      duration: 0.34,
+      gain: 0.05,
+      attack: 0.01,
+      release: 0.12,
+    });
+    scheduleTone(context, {
+      type: "triangle",
+      frequency: 260,
+      endFrequency: 510,
+      start: start + 0.06,
+      duration: 0.24,
+      gain: 0.028,
+      attack: 0.01,
+      release: 0.1,
+    });
+    scheduleTone(context, {
+      type: "sine",
+      frequency: 510,
+      endFrequency: 760,
+      start: start + 0.13,
+      duration: 0.22,
+      gain: 0.026,
+      attack: 0.01,
+      release: 0.1,
+    });
+  });
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -196,6 +369,65 @@ function selectedBuyCount() {
 
 function currentViewer() {
   return state.roomState?.players?.find((player) => player.id === state.playerId);
+}
+
+function roomPlayerById(roomState, playerId) {
+  return roomState?.players?.find((player) => player.id === playerId);
+}
+
+function anyPlayerMoneyIncreased(previousState, nextState) {
+  for (const nextPlayer of (nextState?.players || [])) {
+    const previousPlayer = roomPlayerById(previousState, nextPlayer.id);
+    if ((nextPlayer.money || 0) > (previousPlayer?.money || 0)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function anyPlayerStockChanged(previousState, nextState) {
+  for (const nextPlayer of (nextState?.players || [])) {
+    const previousPlayer = roomPlayerById(previousState, nextPlayer.id);
+    for (const color of STOCK_COLORS) {
+      if ((nextPlayer?.stocks?.[color] || 0) > (previousPlayer?.stocks?.[color] || 0)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function playRoomEventSounds(previousState, nextState) {
+  if (!previousState || !nextState || previousState.last_action === nextState.last_action) {
+    return;
+  }
+
+  if (!previousState.pending_acquire && nextState.pending_acquire) {
+    playAcquireImpactSound();
+  }
+
+  if (nextState.last_action?.includes(" founded the ")) {
+    playCelebrateSound();
+  }
+
+  if (nextState.last_action?.includes(" bought ")) {
+    playMoneyDeductSound();
+  }
+
+  if (
+    previousState.pending_acquire
+    && (anyPlayerMoneyIncreased(previousState, nextState) || anyPlayerStockChanged(previousState, nextState))
+  ) {
+    playMoneyIncomingSound();
+  }
+}
+
+function applyRoomState(nextState, fallbackMessage = "Connected.") {
+  const previousState = state.roomState;
+  state.roomState = nextState;
+  playRoomEventSounds(previousState, nextState);
+  setStatus(nextState.last_action || fallbackMessage);
+  renderGame();
 }
 
 function setPanelFocus(panel, isActive, variant) {
@@ -482,7 +714,7 @@ function renderActionPanels() {
     : "No founding decision waiting.";
   elements.buyingNote.textContent = isBuyingActive
     ? "You can buy up to 3 stocks before finishing this turn."
-    : "Buying unlocks after your tile resolves.";
+    : "Buy opens after your tile resolves.";
   elements.tradeNote.textContent = isTradeActive
     ? `Sell, trade, or keep ${pending.active_target} shares.`
     : "Trade decisions appear during Acquire.";
@@ -606,10 +838,8 @@ async function placeTile(tile) {
       method: "POST",
       body: JSON.stringify({ player_id: state.playerId, tile }),
     });
-    state.roomState = data;
     state.selectedTile = null;
-    setStatus(data.last_action || `${displayTile(tile)} placed.`);
-    renderGame();
+    applyRoomState(data, `${displayTile(tile)} placed.`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -623,9 +853,7 @@ function subscribeToRoomState() {
 }
 
 socket.on("room_state", (data) => {
-  state.roomState = data;
-  setStatus(data.last_action || "Connected.");
-  renderGame();
+  applyRoomState(data, "Connected.");
 });
 
 function handlePlaceButton() {
@@ -650,10 +878,8 @@ async function handleFoundButton() {
         color: state.selectedCompany || null,
       }),
     });
-    state.roomState = data;
     state.selectedCompany = null;
-    setStatus(data.last_action || "Company founded.");
-    renderGame();
+    applyRoomState(data, "Company founded.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -667,11 +893,9 @@ async function handleFinishButton() {
       method: "POST",
       body: JSON.stringify({ player_id: state.playerId }),
     });
-    state.roomState = data;
     state.selectedTile = null;
     state.selectedCompany = null;
-    setStatus(data.last_action || "Turn finished.");
-    renderGame();
+    applyRoomState(data, "Turn finished.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -687,10 +911,8 @@ async function handleBuyButton() {
       method: "POST",
       body: JSON.stringify({ player_id: state.playerId, purchases }),
     });
-    state.roomState = data;
     state.buySelection = {};
-    setStatus(data.last_action || "Stocks bought.");
-    renderGame();
+    applyRoomState(data, "Stocks bought.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -710,10 +932,8 @@ async function handleProcessTradeButton() {
         trade: state.tradeSelection.trade,
       }),
     });
-    state.roomState = data;
     resetTradeSelection();
-    setStatus(data.last_action || "Trade processed.");
-    renderGame();
+    applyRoomState(data, "Trade processed.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -731,12 +951,61 @@ async function handleAcquireOrderButton() {
         order: state.acquireOrder,
       }),
     });
-    state.roomState = data;
     state.acquireOrder = [];
-    setStatus(data.last_action || "Acquire order set.");
-    renderGame();
+    applyRoomState(data, "Acquire order set.");
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+function copyLinksText() {
+  const baseUrl = `${window.location.origin}/game/${encodeURIComponent(state.roomId)}`;
+  const players = state.roomState?.players || [];
+  const lines = players.map((player) => (
+    `${player.name}: ${baseUrl}?player_id=${encodeURIComponent(player.id)}`
+  ));
+  return [
+    `Room ${state.roomId}`,
+    ...lines,
+  ].join("\n");
+}
+
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const helper = document.createElement("textarea");
+  helper.value = text;
+  helper.setAttribute("readonly", "");
+  helper.style.position = "fixed";
+  helper.style.opacity = "0";
+  document.body.appendChild(helper);
+  helper.select();
+  document.execCommand("copy");
+  document.body.removeChild(helper);
+}
+
+function showCopyLinkFeedback(label) {
+  clearTimeout(state.copyLinkResetTimer);
+  elements.copyLinkButton.textContent = label;
+  state.copyLinkResetTimer = window.setTimeout(() => {
+    elements.copyLinkButton.textContent = "Copy Link";
+  }, 1500);
+}
+
+async function handleCopyLinkButton() {
+  if (!state.roomId || !state.roomState?.players?.length) {
+    showCopyLinkFeedback("No Links");
+    return;
+  }
+
+  try {
+    await writeClipboard(copyLinksText());
+    showCopyLinkFeedback("Copied");
+  } catch (error) {
+    showCopyLinkFeedback("Copy Failed");
   }
 }
 
@@ -756,6 +1025,9 @@ elements.tradePlus.addEventListener("click", () => {
   state.tradeSelection.trade += 2;
   renderTrade();
 });
+elements.copyLinkButton.addEventListener("click", handleCopyLinkButton);
+window.addEventListener("pointerdown", unlockAudio, { passive: true });
+window.addEventListener("keydown", unlockAudio);
 
 renderBoard();
 subscribeToRoomState();
