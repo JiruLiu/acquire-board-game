@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: acquire-board-game
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 --threads 100 app:app
+    healthCheckPath: /
+    numInstances: 1
+    autoDeployTrigger: commit

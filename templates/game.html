@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Merger Game Board</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero game-hero">
+        <h1>Acquire</h1>
+      </section>
+
+      <section class="game-layout">
+        <aside class="game-leftbar">
+          <section class="panel holdings-panel">
+            <div class="holdings-header">
+              <h3>Money & Stocks</h3>
+            </div>
+
+            <div class="holdings-table-wrap">
+              <table class="holdings-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Money</th>
+                    <th><span class="dot red"></span></th>
+                    <th><span class="dot yellow"></span></th>
+                    <th><span class="dot green"></span></th>
+                    <th><span class="dot pink"></span></th>
+                    <th><span class="dot purple"></span></th>
+                    <th><span class="dot orange"></span></th>
+                    <th><span class="dot blue"></span></th>
+                  </tr>
+                </thead>
+                <tbody id="holdings-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="buying-panel" class="panel buying-panel">
+            <div class="buying-header">
+              <h3>Buying</h3>
+              <span id="buying-count" class="buying-count">0 / 3</span>
+            </div>
+            <p id="buying-note" class="panel-note">Buying unlocks after your tile resolves.</p>
+            <div id="buying-options" class="buying-options"></div>
+            <div class="buying-footer">
+              <span id="buying-total" class="buying-total">Total: $0</span>
+              <button id="buy-button" class="buy-button" disabled>Buy Stocks</button>
+            </div>
+          </section>
+
+          <section id="trade-panel" class="panel trade-panel">
+            <div class="trade-header">
+              <h3>Trade</h3>
+              <span id="trade-player" class="trade-player">No Acquire</span>
+            </div>
+            <p id="trade-note" class="panel-note">Trade decisions appear during Acquire.</p>
+            <div id="trade-company-options" class="trade-company-options"></div>
+            <div class="trade-summary">
+              <span id="trade-survivor">Survivor: --</span>
+              <span id="trade-owned">Owned: 0</span>
+            </div>
+            <div class="trade-actions">
+              <div class="trade-row">
+                <span>Sell</span>
+                <button id="sell-minus" class="trade-step" type="button" disabled>-</button>
+                <strong id="sell-count">0</strong>
+                <button id="sell-plus" class="trade-step" type="button" disabled>+</button>
+              </div>
+              <div class="trade-row">
+                <span>Trade</span>
+                <button id="trade-minus" class="trade-step" type="button" disabled>-</button>
+                <strong id="trade-count">0</strong>
+                <button id="trade-plus" class="trade-step" type="button" disabled>+</button>
+              </div>
+              <div class="trade-row">
+                <span>Keep</span>
+                <strong id="keep-count">0</strong>
+              </div>
+            </div>
+            <div class="trade-footer">
+              <span id="trade-result" class="trade-result">$0, +0 stock</span>
+              <button id="process-trade-button" class="trade-button" disabled>Process</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="game-stage">
+          <section class="panel board-shell">
+            <div class="board-wrap">
+              <div id="board" class="board"></div>
+            </div>
+          </section>
+
+          <section class="panel rack-panel">
+            <div class="rack-block">
+              <div class="rack-body">
+                <div id="tile-rack" class="tile-rack"></div>
+                <button id="place-button" class="place-button" disabled>Place</button>
+              </div>
+              <button id="finish-button" class="finish-button" disabled>Finish Turn</button>
+            </div>
+          </section>
+        </section>
+
+        <aside class="game-sidebar">
+          <section class="panel status-panel">
+            <p class="small-label">Status</p>
+            <p class="status" id="status">Connecting to room.</p>
+          </section>
+
+          <section id="found-panel" class="panel found-panel">
+            <div class="found-company-header">
+              <h3>Found a Company</h3>
+              <button id="found-button" class="found-button" disabled>Found</button>
+            </div>
+            <p id="found-note" class="panel-note">No founding decision waiting.</p>
+            <div id="company-options" class="company-options"></div>
+          </section>
+
+          <section id="acquire-order-panel" class="panel acquire-order-panel">
+            <div class="acquire-order-header">
+              <h3>Acquire Orders</h3>
+              <button id="acquire-order-button" class="acquire-order-button" disabled>Set</button>
+            </div>
+            <p id="acquire-order-note" class="acquire-order-note">No Acquire order needed.</p>
+            <div id="acquire-order-list" class="acquire-order-list"></div>
+          </section>
+
+          <section class="panel share-panel">
+            <div class="share-header">
+              <h3>Share Prices</h3>
+            </div>
+
+            <div class="share-table-wrap">
+              <table class="share-table">
+                <thead>
+                  <tr>
+                    <th>
+                      <span class="legend-group">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                      </span>
+                    </th>
+                    <th>
+                      <span class="legend-group">
+                        <span class="dot green"></span>
+                        <span class="dot pink"></span>
+                        <span class="dot purple"></span>
+                      </span>
+                    </th>
+                    <th>
+                      <span class="legend-group">
+                        <span class="dot orange"></span>
+                        <span class="dot blue"></span>
+                      </span>
+                    </th>
+                    <th>Price</th>
+                    <th>Top1</th>
+                    <th>Top2</th>
+                    <th>Top3</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td>2</td><td></td><td></td><td>$200</td><td>$2000</td><td>$1500</td><td>$1000</td></tr>
+                  <tr><td>3</td><td>2</td><td></td><td>$300</td><td>$3000</td><td>$2200</td><td>$1500</td></tr>
+                  <tr><td>4</td><td>3</td><td>2</td><td>$400</td><td>$4000</td><td>$3000</td><td>$2000</td></tr>
+                  <tr><td>5</td><td>4</td><td>3</td><td>$500</td><td>$5000</td><td>$3700</td><td>$2500</td></tr>
+                  <tr><td>6-10</td><td>5</td><td>4</td><td>$600</td><td>$6000</td><td>$4500</td><td>$3000</td></tr>
+                  <tr><td>11-20</td><td>6-10</td><td>5</td><td>$700</td><td>$7000</td><td>$5200</td><td>$3500</td></tr>
+                  <tr><td>21-30</td><td>11-20</td><td>6-10</td><td>$800</td><td>$8000</td><td>$6000</td><td>$4000</td></tr>
+                  <tr><td>31-40</td><td>21-30</td><td>11-20</td><td>$900</td><td>$9000</td><td>$6700</td><td>$4500</td></tr>
+                  <tr><td>41+</td><td>31-40</td><td>21-30</td><td>$1000</td><td>$10000</td><td>$7500</td><td>$5000</td></tr>
+                  <tr><td></td><td>41+</td><td>31-40</td><td>$1100</td><td>$11000</td><td>$8200</td><td>$5500</td></tr>
+                  <tr><td></td><td></td><td>41+</td><td>$1200</td><td>$12000</td><td>$9000</td><td>$6000</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <section id="ending-panel" class="ending-panel" hidden>
+        <div class="panel ending-card">
+          <h2>Game Over</h2>
+          <p id="ending-winner" class="ending-winner"></p>
+          <div id="ending-rankings" class="ending-rankings"></div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      window.GAME_BOOTSTRAP = {
+        roomId: "{{ room_id }}",
+        playerId: "{{ player_id }}",
+      };
+    </script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/game.js"></script>
+  </body>
+</html>

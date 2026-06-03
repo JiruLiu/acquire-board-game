@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Merger Game Prototype</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <h1>Acquire</h1>
+      </section>
+
+      <section class="panel controls">
+        <div class="field-row">
+          <label for="player-name">Your name</label>
+          <input id="player-name" placeholder="Letters and numbers only" maxlength="10">
+        </div>
+        <div class="button-row">
+          <button id="create-room">Create Room</button>
+        </div>
+        <div class="join-row">
+          <input id="room-code" placeholder="Room code, e.g. AB12CD" maxlength="6">
+          <button id="join-room">Join Room</button>
+        </div>
+        <p class="status" id="status">Create a room or join one.</p>
+      </section>
+
+      <section class="panel lobby-panel">
+        <div class="room-header">
+          <div>
+            <p class="small-label">Room</p>
+            <h2 id="room-id">Not connected</h2>
+          </div>
+          <button id="start-game" disabled>Start Game</button>
+        </div>
+
+        <div class="players-block">
+          <h3>Players In Room</h3>
+          <ul id="players"></ul>
+        </div>
+      </section>
+    </main>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
