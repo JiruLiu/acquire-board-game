@@ -75,6 +75,10 @@ socketio = SocketIO(app, async_mode="threading")
 rooms: dict[str, Room] = {}
 room_lock = threading.Lock()
 PLAYER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9]{1,10}$")
+ROOM_CLEANUP_GRACE_SECONDS = float(os.environ.get("ROOM_CLEANUP_GRACE_SECONDS", "10"))
+socket_membership: dict[str, tuple[str, str]] = {}
+room_connected_sids: dict[str, set[str]] = {}
+room_cleanup_timers: dict[str, threading.Timer] = {}
 
 
 class RoomNotFoundError(ValueError):
@@ -83,6 +87,49 @@ class RoomNotFoundError(ValueError):
 
 def player_socket_room(room_id: str, player_id: str) -> str:
     return f"{room_id.upper()}:{player_id}"
+
+
+def cancel_room_cleanup(room_id: str) -> None:
+    timer = room_cleanup_timers.pop(room_id.upper(), None)
+    if timer:
+        timer.cancel()
+
+
+def schedule_room_cleanup(room_id: str) -> None:
+    normalized_room_id = room_id.upper()
+    cancel_room_cleanup(normalized_room_id)
+
+    def cleanup() -> None:
+        with room_lock:
+            active_sids = room_connected_sids.get(normalized_room_id)
+            if active_sids:
+                return
+            rooms.pop(normalized_room_id, None)
+            room_connected_sids.pop(normalized_room_id, None)
+            room_cleanup_timers.pop(normalized_room_id, None)
+
+    timer = threading.Timer(ROOM_CLEANUP_GRACE_SECONDS, cleanup)
+    timer.daemon = True
+    room_cleanup_timers[normalized_room_id] = timer
+    timer.start()
+
+
+def detach_socket(sid: str) -> None:
+    membership = socket_membership.pop(sid, None)
+    if not membership:
+        return
+
+    room_id, _player_id = membership
+    active_sids = room_connected_sids.get(room_id)
+    if not active_sids:
+        return
+
+    active_sids.discard(sid)
+    if active_sids:
+        return
+
+    room_connected_sids.pop(room_id, None)
+    schedule_room_cleanup(room_id)
 
 
 def broadcast_room_state(room: Room) -> None:
@@ -604,6 +651,10 @@ def join_room_state(data):
     if room_id and player_id:
         socket_join_room(player_socket_room(room_id, player_id))
         with room_lock:
+            detach_socket(request.sid)
+            cancel_room_cleanup(room_id)
+            socket_membership[request.sid] = (room_id, player_id)
+            room_connected_sids.setdefault(room_id, set()).add(request.sid)
             room = rooms.get(room_id)
             if room:
                 socketio.emit(
@@ -611,6 +662,12 @@ def join_room_state(data):
                     build_public_room_state(room, player_id),
                     to=request.sid,
                 )
+
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    with room_lock:
+        detach_socket(request.sid)
 
 
 @app.post("/api/rooms")
