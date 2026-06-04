@@ -12,8 +12,10 @@ const state = {
   buySelection: {},
   tradeSelection: { sell: 0, trade: 0 },
   acquireOrder: [],
+  selectedSurvivor: null,
   statusHistory: [],
   copyLinkResetTimer: null,
+  endingClosed: false,
 };
 
 const socket = io();
@@ -58,6 +60,8 @@ const elements = {
   endingPanel: document.getElementById("ending-panel"),
   endingWinner: document.getElementById("ending-winner"),
   endingRankings: document.getElementById("ending-rankings"),
+  endingCloseButton: document.getElementById("ending-close-button"),
+  showEndingButton: document.getElementById("show-ending-button"),
 };
 
 let audioContext = null;
@@ -111,9 +115,13 @@ function scheduleTone(context, {
 
 function playSound(recipe) {
   const context = getAudioContext();
-  if (!context || context.state !== "running") {
+  if (!context) {
     return;
   }
+  if (context.state === "suspended") {
+    context.resume().catch(() => {});
+  }
+  if (context.state !== "running") return;
   const start = context.currentTime + 0.01;
   recipe(context, start);
 }
@@ -139,6 +147,48 @@ function playMoneyDeductSound() {
       gain: 0.04,
       attack: 0.004,
       release: 0.05,
+    });
+  });
+}
+
+function playMoneyDealtSound() {
+  playSound((context, start) => {
+    for (let index = 0; index < 4; index += 1) {
+      scheduleTone(context, {
+        type: "triangle",
+        frequency: 520 + (index * 70),
+        endFrequency: 620 + (index * 85),
+        start: start + (index * 0.045),
+        duration: 0.08,
+        gain: 0.034,
+        attack: 0.004,
+        release: 0.04,
+      });
+    }
+  });
+}
+
+function playTilePlaceSound() {
+  playSound((context, start) => {
+    scheduleTone(context, {
+      type: "triangle",
+      frequency: 260,
+      endFrequency: 180,
+      start,
+      duration: 0.08,
+      gain: 0.04,
+      attack: 0.003,
+      release: 0.045,
+    });
+    scheduleTone(context, {
+      type: "sine",
+      frequency: 460,
+      endFrequency: 360,
+      start: start + 0.035,
+      duration: 0.07,
+      gain: 0.025,
+      attack: 0.003,
+      release: 0.04,
     });
   });
 }
@@ -241,13 +291,31 @@ function escapeHtml(value) {
   }[character]));
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function setStatus(message, isError = false) {
   if (message && state.statusHistory[state.statusHistory.length - 1] !== message) {
     state.statusHistory.push(message);
   }
 
+  const playerNames = (state.roomState?.players || [])
+    .map((player) => player.name)
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length);
+  const namePattern = playerNames.length
+    ? new RegExp(`\\b(${playerNames.map(escapeRegExp).join("|")})\\b`, "g")
+    : null;
+
   elements.status.innerHTML = state.statusHistory
-    .map((entry) => `<span class="status-line">${escapeHtml(entry)}</span>`)
+    .map((entry) => {
+      let line = escapeHtml(entry);
+      if (namePattern) {
+        line = line.replace(namePattern, "<strong>$1</strong>");
+      }
+      return `<span class="status-line">${line}</span>`;
+    })
     .join("");
   elements.status.scrollTop = elements.status.scrollHeight;
   elements.status.classList.toggle("error", isError);
@@ -402,6 +470,10 @@ function playRoomEventSounds(previousState, nextState) {
     return;
   }
 
+  if (previousState.last_placed_tile !== nextState.last_placed_tile) {
+    playTilePlaceSound();
+  }
+
   if (!previousState.pending_acquire && nextState.pending_acquire) {
     playAcquireImpactSound();
   }
@@ -411,12 +483,12 @@ function playRoomEventSounds(previousState, nextState) {
   }
 
   if (nextState.last_action?.includes(" bought ")) {
-    playMoneyDeductSound();
+    playMoneyDealtSound();
   }
 
   if (
-    previousState.pending_acquire
-    && (anyPlayerMoneyIncreased(previousState, nextState) || anyPlayerStockChanged(previousState, nextState))
+    nextState.last_action?.includes("shareholder reward")
+    && anyPlayerMoneyIncreased(previousState, nextState)
   ) {
     playMoneyIncomingSound();
   }
@@ -569,7 +641,9 @@ function renderTrade() {
   const pending = state.roomState?.pending_acquire;
   const viewer = currentViewer();
   const bankStocks = state.roomState?.bank?.stocks || {};
-  const isActivePlayer = pending?.active_player_id === state.playerId && !pending?.ordering;
+  const isActivePlayer = pending?.active_player_id === state.playerId
+    && !pending?.ordering
+    && !pending?.choosing_survivor;
   const activeTarget = pending?.active_target;
   const survivor = pending?.survivor;
   const owned = isActivePlayer ? (viewer?.stocks?.[activeTarget] || 0) : 0;
@@ -624,11 +698,18 @@ function renderTrade() {
 function renderAcquireOrder() {
   const pending = state.roomState?.pending_acquire;
   const isOrdering = !!pending?.ordering;
+  const isChoosingSurvivor = !!pending?.choosing_survivor;
   const isStarter = pending?.starter_id === state.playerId;
   const sizes = pending?.sizes || {};
 
-  if (!isOrdering) {
+  if (isChoosingSurvivor) {
     state.acquireOrder = [];
+    if (!state.selectedSurvivor || !pending.survivor_choices.includes(state.selectedSurvivor)) {
+      state.selectedSurvivor = pending.survivor_choices[0] || null;
+    }
+  } else if (!isOrdering) {
+    state.acquireOrder = [];
+    state.selectedSurvivor = null;
   } else if (
     state.acquireOrder.length !== pending.targets.length
     || state.acquireOrder.some((color) => !pending.targets.includes(color))
@@ -639,6 +720,10 @@ function renderAcquireOrder() {
   elements.acquireOrderList.innerHTML = "";
   if (!pending) {
     elements.acquireOrderNote.textContent = "No Acquire order needed.";
+  } else if (isChoosingSurvivor && isStarter) {
+    elements.acquireOrderNote.textContent = "Choose the surviving company.";
+  } else if (isChoosingSurvivor) {
+    elements.acquireOrderNote.textContent = "Waiting for the survivor choice.";
   } else if (isOrdering && isStarter) {
     elements.acquireOrderNote.textContent = `Choose the tied Acquire order for ${pending.survivor}.`;
   } else if (isOrdering) {
@@ -650,6 +735,31 @@ function renderAcquireOrder() {
     elements.acquireOrderNote.textContent = `Survivor: ${pending.survivor || "--"}`;
   }
 
+  if (isChoosingSurvivor) {
+    for (const color of pending.survivor_choices || []) {
+      const size = sizes[color] || 0;
+      const row = document.createElement("button");
+      row.className = `acquire-survivor-row${color === state.selectedSurvivor ? " selected" : ""}`;
+      row.type = "button";
+      row.disabled = !isStarter;
+      row.innerHTML = `
+        <span class="dot ${color}"></span>
+        <span>${color}</span>
+        <span>Size ${size}</span>
+      `;
+      row.addEventListener("click", () => {
+        if (!isStarter) return;
+        state.selectedSurvivor = color;
+        renderAcquireOrder();
+      });
+      elements.acquireOrderList.appendChild(row);
+    }
+    elements.acquireOrderButton.textContent = "Set";
+    elements.acquireOrderButton.disabled = !isStarter || !state.selectedSurvivor;
+    return;
+  }
+
+  elements.acquireOrderButton.textContent = "Set";
   const order = state.acquireOrder.length ? state.acquireOrder : (pending?.targets || []);
   for (const [index, color] of order.entries()) {
     const size = sizes[color] || 0;
@@ -693,7 +803,7 @@ function renderActionPanels() {
   const pending = state.roomState?.pending_acquire;
   const isFoundActive = state.roomState?.pending_found_player_id === state.playerId
     && !state.roomState?.game_over;
-  const isAcquireOrderActive = !!pending?.ordering
+  const isAcquireOrderActive = (!!pending?.ordering || !!pending?.choosing_survivor)
     && pending?.starter_id === state.playerId
     && !state.roomState?.game_over;
   const isBuyingActive = state.roomState?.pending_finish_player_id === state.playerId
@@ -702,6 +812,7 @@ function renderActionPanels() {
     && !state.roomState?.game_over;
   const isTradeActive = pending?.active_player_id === state.playerId
     && !pending?.ordering
+    && !pending?.choosing_survivor
     && !state.roomState?.game_over;
 
   setPanelFocus(elements.foundPanel, isFoundActive, "found");
@@ -723,10 +834,13 @@ function renderActionPanels() {
 function renderEnding() {
   if (!state.roomState?.game_over) {
     elements.endingPanel.hidden = true;
+    elements.showEndingButton.hidden = true;
+    state.endingClosed = false;
     return;
   }
 
-  elements.endingPanel.hidden = false;
+  elements.endingPanel.hidden = state.endingClosed;
+  elements.showEndingButton.hidden = !state.endingClosed;
   elements.endingWinner.textContent = state.roomState.winner
     ? `${state.roomState.winner} wins`
     : "Final ranking";
@@ -734,6 +848,8 @@ function renderEnding() {
 
   for (const [index, player] of (state.roomState.final_rankings || []).entries()) {
     const cashBeforeSales = player.cash_before_sales ?? player.money;
+    const rewardTotal = player.shareholder_reward_total ?? 0;
+    const rewards = player.shareholder_rewards || [];
     const stockSaleTotal = player.stock_sale_total ?? 0;
     const finalTotal = player.final_total ?? player.money;
     const stockSales = player.stock_sales || [];
@@ -763,6 +879,19 @@ function renderEnding() {
           <span>Cash on hand</span>
           <span>${formatMoney(cashBeforeSales)}</span>
         </div>
+        <div class="ending-detail-row">
+          <span>Shareholder rewards</span>
+          <span>${formatMoney(rewardTotal)}</span>
+        </div>
+        ${rewards.map((reward) => `
+          <div class="ending-detail-row ending-subdetail">
+            <span class="ending-detail-label">
+              <span class="dot ${reward.color}"></span>
+              ${escapeHtml(reward.rank)}
+            </span>
+            <span>${formatMoney(reward.each)}</span>
+          </div>
+        `).join("")}
         ${salesMarkup}
         <div class="ending-detail-row ending-detail-total">
           <span>Stock sale total</span>
@@ -920,7 +1049,7 @@ async function handleBuyButton() {
 
 async function handleProcessTradeButton() {
   const pending = state.roomState?.pending_acquire;
-  if (!pending || pending.active_player_id !== state.playerId) return;
+  if (!pending || pending.active_player_id !== state.playerId || pending.choosing_survivor) return;
 
   try {
     const data = await api(`/api/rooms/${state.roomId}/trade_stocks`, {
@@ -941,9 +1070,23 @@ async function handleProcessTradeButton() {
 
 async function handleAcquireOrderButton() {
   const pending = state.roomState?.pending_acquire;
-  if (!pending?.ordering || pending.starter_id !== state.playerId) return;
+  if (!pending || pending.starter_id !== state.playerId) return;
 
   try {
+    if (pending.choosing_survivor) {
+      const data = await api(`/api/rooms/${state.roomId}/set_acquire_survivor`, {
+        method: "POST",
+        body: JSON.stringify({
+          player_id: state.playerId,
+          survivor: state.selectedSurvivor,
+        }),
+      });
+      state.selectedSurvivor = null;
+      applyRoomState(data, "Acquire survivor set.");
+      return;
+    }
+
+    if (!pending.ordering) return;
     const data = await api(`/api/rooms/${state.roomId}/set_acquire_order`, {
       method: "POST",
       body: JSON.stringify({
@@ -956,6 +1099,16 @@ async function handleAcquireOrderButton() {
   } catch (error) {
     setStatus(error.message, true);
   }
+}
+
+function closeEndingPanel() {
+  state.endingClosed = true;
+  renderEnding();
+}
+
+function showEndingPanel() {
+  state.endingClosed = false;
+  renderEnding();
 }
 
 function copyLinksText() {
@@ -1037,3 +1190,5 @@ elements.finishButton.addEventListener("click", handleFinishButton);
 elements.buyButton.addEventListener("click", handleBuyButton);
 elements.processTradeButton.addEventListener("click", handleProcessTradeButton);
 elements.acquireOrderButton.addEventListener("click", handleAcquireOrderButton);
+elements.endingCloseButton.addEventListener("click", closeEndingPanel);
+elements.showEndingButton.addEventListener("click", showEndingPanel);

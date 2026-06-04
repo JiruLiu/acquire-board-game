@@ -112,7 +112,10 @@
 
         <aside class="game-sidebar">
           <section class="panel status-panel">
-            <p class="small-label">Status</p>
+            <div class="status-heading">
+              <p class="small-label">Status</p>
+              <button id="show-ending-button" class="show-ending-button" type="button" hidden>Final Scores</button>
+            </div>
             <p class="status" id="status">Connecting to room.</p>
           </section>
 
@@ -163,9 +166,9 @@
                       </span>
                     </th>
                     <th>Price</th>
-                    <th>Top1</th>
-                    <th>Top2</th>
-                    <th>Top3</th>
+                    <th>1st Reward</th>
+                    <th>2nd Reward</th>
+                    <th>3rd Reward</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -189,6 +192,7 @@
 
       <section id="ending-panel" class="ending-panel" hidden>
         <div class="panel ending-card">
+          <button id="ending-close-button" class="ending-close-button" type="button" aria-label="Close final scores">Close</button>
           <h2>Game Over</h2>
           <p id="ending-winner" class="ending-winner"></p>
           <div id="ending-rankings" class="ending-rankings"></div>

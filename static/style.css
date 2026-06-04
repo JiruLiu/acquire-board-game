@@ -564,6 +564,19 @@ button:disabled {
   width: 100%;
 }
 
+.status-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5vw;
+}
+
+.show-ending-button {
+  padding: 0.24vw 0.48vw;
+  color: white;
+  font-size: 0.56vw;
+}
+
 .status {
   margin: 0.4vw 0 0;
   color: var(--accent);
@@ -584,6 +597,10 @@ button:disabled {
   background: rgba(255, 255, 255, 0.45);
 }
 
+.status-line strong {
+  font-weight: 800;
+}
+
 .ending-panel {
   position: fixed;
   inset: 0;
@@ -601,11 +618,21 @@ button:disabled {
 }
 
 .ending-card {
+  position: relative;
   width: min(56vw, 780px);
   max-height: 85vh;
   overflow-y: auto;
   padding: 1.4vw;
   text-align: left;
+}
+
+.ending-close-button {
+  position: absolute;
+  top: 0.9vw;
+  right: 0.9vw;
+  padding: 0.28vw 0.55vw;
+  color: white;
+  font-size: 0.6vw;
 }
 
 .ending-card h2 {
@@ -667,6 +694,11 @@ button:disabled {
   gap: 1vw;
   font-size: 0.68vw;
   color: var(--muted);
+}
+
+.ending-subdetail {
+  padding-left: 1vw;
+  font-size: 0.62vw;
 }
 
 .ending-detail-label {
@@ -768,6 +800,30 @@ button:disabled {
   font-size: 0.62vw;
 }
 
+.acquire-survivor-row {
+  display: grid;
+  grid-template-columns: 0.95vw 1fr 3vw;
+  gap: 0.35vw;
+  align-items: center;
+  width: 100%;
+  padding: 0.18vw 0.25vw;
+  border-radius: 0.32vw;
+  background: rgba(31, 42, 47, 0.08);
+  color: var(--ink);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.62vw;
+  text-align: left;
+}
+
+.acquire-survivor-row.selected {
+  outline: 2px solid rgba(15, 108, 92, 0.45);
+  background: rgba(15, 108, 92, 0.14);
+}
+
+.acquire-survivor-row:disabled {
+  color: #9ca0a0;
+}
+
 .acquire-order-row.disabled {
   color: #9ca0a0;
 }
@@ -852,8 +908,8 @@ button:disabled {
 
 .buying-row .dot,
 .trade-dot-button .dot {
-  width: 0.52vw;
-  height: 0.52vw;
+  width: 0.68vw;
+  height: 0.68vw;
 }
 
 .buying-row.disabled {
@@ -1002,8 +1058,8 @@ button:disabled {
 }
 
 .dot {
-  width: 0.65vw;
-  height: 0.65vw;
+  width: 0.82vw;
+  height: 0.82vw;
   border-radius: 999px;
   display: inline-block;
 }
@@ -1090,8 +1146,8 @@ button:disabled {
 }
 
 .holdings-table .dot {
-  width: 0.52vw;
-  height: 0.52vw;
+  width: 0.68vw;
+  height: 0.68vw;
 }
 
 .bank-row td {
@@ -1233,6 +1289,7 @@ button:disabled {
   .buying-count,
   .buying-total,
   .copy-link-button,
+  .show-ending-button,
   .buying-row,
   .buy-button,
   .trade-player,
@@ -1240,6 +1297,12 @@ button:disabled {
   .trade-actions,
   .trade-result,
   .trade-button {
+    font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .ending-close-button {
+    top: 12px;
+    right: 12px;
     font-size: clamp(0.68rem, 2vw, 0.82rem);
   }
 
@@ -1254,6 +1317,16 @@ button:disabled {
   .panel-note,
   .acquire-order-note {
     font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .acquire-order-row,
+  .acquire-survivor-row {
+    grid-template-columns: 18px 1fr 54px 42px 50px;
+    font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .acquire-survivor-row {
+    grid-template-columns: 18px 1fr 54px;
   }
 
   .ending-card {
@@ -1276,6 +1349,7 @@ button:disabled {
 
   .ending-row-main strong,
   .ending-detail-row,
+  .ending-subdetail,
   .ending-empty {
     font-size: clamp(0.7rem, 2vw, 0.9rem);
   }

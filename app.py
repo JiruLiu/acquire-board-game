@@ -55,9 +55,11 @@ class Room:
     pending_found_tiles: list[str] = field(default_factory=list)
     pending_finish_player_id: str | None = None
     pending_acquire_starter_id: str | None = None
+    pending_acquire_survivor_choices: list[str] = field(default_factory=list)
     pending_acquire_survivor: str | None = None
     pending_acquire_targets: list[str] = field(default_factory=list)
     pending_acquire_sizes: dict[str, int] = field(default_factory=dict)
+    pending_acquire_reward_details: list[dict] = field(default_factory=list)
     pending_acquire_ordering: bool = False
     pending_acquire_player_order: list[str] = field(default_factory=list)
     pending_acquire_player_index: int = 0
@@ -251,34 +253,46 @@ def tile_connects_super_company(room: Room, tile: str) -> bool:
             connected.add(neighbor)
             pending.append(neighbor)
 
+    connected_supers = set()
     for connected_tile in connected:
         for neighbor in adjacent_tiles(connected_tile):
             if neighbor not in room.board:
                 continue
-            if board_company(room.board[neighbor]) in supers:
-                return True
-    return False
+            company = board_company(room.board[neighbor])
+            if company in supers:
+                connected_supers.add(company)
+    return len(connected_supers) >= 2
 
 
-def remove_invalid_tiles(room: Room) -> int:
+def remove_invalid_tiles(room: Room) -> list[str]:
     invalid_tiles = {
         tile
         for tile in ALL_TILES
         if tile not in room.board and tile_connects_super_company(room, tile)
     }
     if not invalid_tiles:
-        return 0
+        return []
 
     before_deck = len(room.deck)
     room.deck = [tile for tile in room.deck if tile not in invalid_tiles]
-    removed = before_deck - len(room.deck)
+    removed_tiles = set(invalid_tiles) if before_deck != len(room.deck) else set()
 
     for player in room.players:
         for index, tile in enumerate(player.tiles):
             if tile in invalid_tiles:
                 player.tiles[index] = None
-                removed += 1
-    return removed
+                removed_tiles.add(tile)
+    return sorted(removed_tiles, key=tile_sort_key)
+
+
+def append_invalid_tiles_notice(room: Room, invalid_tiles: list[str]) -> None:
+    if not invalid_tiles:
+        return
+    tile_labels = ", ".join(display_tile(tile) for tile in invalid_tiles)
+    room.last_action += (
+        f" Invalid tile{'' if len(invalid_tiles) == 1 else 's'} "
+        f"{tile_labels} became unplayable."
+    )
 
 
 def fill_player_tiles(room: Room, player: Player) -> int:
@@ -322,11 +336,115 @@ def begin_buying_if_current_player_has_no_tiles(room: Room) -> bool:
     return True
 
 
+def bonus_values_for_price(price: int) -> tuple[int, int, int]:
+    return price * 10, (price * 15 // 2) // 100 * 100, price * 5
+
+
+def shareholder_reward_allocations(room: Room, color: str) -> tuple[list[dict], dict[str, int]]:
+    size = company_sizes(room).get(color, 0)
+    if not room.companies_found.get(color) or size <= 0:
+        return [], {}
+
+    price = share_price(color, size)
+    first, second, third = bonus_values_for_price(price)
+    shareholders = [
+        player
+        for player in room.players
+        if player.stocks.get(color, 0) > 0
+    ]
+    if not shareholders:
+        return [], {}
+
+    shareholders.sort(key=lambda player: player.stocks.get(color, 0), reverse=True)
+    groups: list[list[Player]] = []
+    for player in shareholders:
+        if not groups or player.stocks.get(color, 0) != groups[-1][0].stocks.get(color, 0):
+            groups.append([player])
+        else:
+            groups[-1].append(player)
+
+    awards_by_player = {player.id: 0 for player in room.players}
+    details = []
+
+    def pay(group: list[Player], amount: int, label: str) -> None:
+        if not group or amount <= 0:
+            return
+        share = amount // len(group)
+        names = [player.name for player in group]
+        for player in group:
+            awards_by_player[player.id] += share
+        details.append(
+            {
+                "color": color,
+                "rank": label,
+                "player_ids": [player.id for player in group],
+                "names": names,
+                "shares": group[0].stocks.get(color, 0),
+                "amount": amount,
+                "each": share,
+            }
+        )
+
+    if len(shareholders) == 1:
+        pay(groups[0], first + third, "first and third")
+    elif len(groups[0]) >= 2:
+        pay(groups[0], first + second, "tied first")
+    else:
+        pay(groups[0], first, "first")
+        if len(groups) > 1:
+            if len(groups[1]) >= 2:
+                pay(groups[1], second + third, "tied second")
+            else:
+                pay(groups[1], second, "second")
+                if len(groups) > 2:
+                    pay(groups[2], third, "third" if len(groups[2]) == 1 else "tied third")
+
+    return details, {player_id: amount for player_id, amount in awards_by_player.items() if amount}
+
+
+def pay_shareholder_rewards(room: Room, color: str) -> list[dict]:
+    details, awards = shareholder_reward_allocations(room, color)
+    if not awards:
+        return []
+    for player in room.players:
+        player.money += awards.get(player.id, 0)
+    return details
+
+
+def describe_reward_details(details: list[dict]) -> str:
+    if not details:
+        return "No shareholder rewards were paid."
+    parts = []
+    for detail in details:
+        recipients = ", ".join(detail["names"])
+        if len(detail["names"]) > 1:
+            parts.append(
+                f"{recipients} shared ${detail['amount']} for {detail['rank']} "
+                f"(${detail['each']} each)"
+            )
+        else:
+            parts.append(f"{recipients} received ${detail['each']} for {detail['rank']}")
+    return "; ".join(parts) + "."
+
+
+def final_shareholder_rewards(room: Room) -> tuple[list[dict], dict[str, int]]:
+    details = []
+    totals = {player.id: 0 for player in room.players}
+    for color in STOCK_COLORS:
+        color_details, awards = shareholder_reward_allocations(room, color)
+        details.extend(color_details)
+        for player_id, amount in awards.items():
+            totals[player_id] += amount
+    return details, {player_id: amount for player_id, amount in totals.items() if amount}
+
+
 def build_final_rankings(room: Room) -> list[dict]:
     prices = share_prices(room)
+    reward_details, reward_totals = final_shareholder_rewards(room)
     rankings = []
     for player in room.players:
         cash_before_sales = player.money
+        shareholder_rewards = reward_totals.get(player.id, 0)
         stock_sales = []
         stock_sale_total = 0
         for color in STOCK_COLORS:
@@ -345,13 +463,17 @@ def build_final_rankings(room: Room) -> list[dict]:
             )
             stock_sale_total += subtotal
 
-        final_total = cash_before_sales + stock_sale_total
+        final_total = cash_before_sales + shareholder_rewards + stock_sale_total
         rankings.append(
             {
                 "player_id": player.id,
                 "name": player.name,
                 "money": final_total,
                 "cash_before_sales": cash_before_sales,
+                "shareholder_reward_total": shareholder_rewards,
+                "shareholder_rewards": [
+                    detail for detail in reward_details if player.id in detail["player_ids"]
+                ],
                 "stock_sale_total": stock_sale_total,
                 "stock_sales": stock_sales,
                 "final_total": final_total,
@@ -364,8 +486,10 @@ def build_final_rankings(room: Room) -> list[dict]:
 
 def liquidate_and_rank(room: Room) -> None:
     prices = share_prices(room)
+    _reward_details, reward_totals = final_shareholder_rewards(room)
     room.final_rankings = build_final_rankings(room)
     for player in room.players:
+        player.money += reward_totals.get(player.id, 0)
         for color in STOCK_COLORS:
             count = player.stocks.get(color, 0)
             if count:
@@ -423,15 +547,25 @@ def share_prices(room: Room) -> dict[str, int | None]:
 
 
 def pending_acquire_state(room: Room) -> dict | None:
-    if not room.pending_acquire_survivor or not room.pending_acquire_targets:
+    if not room.pending_acquire_survivor and not room.pending_acquire_survivor_choices:
         return None
     base_state = {
         "starter_id": room.pending_acquire_starter_id,
         "survivor": room.pending_acquire_survivor,
+        "survivor_choices": room.pending_acquire_survivor_choices,
         "targets": room.pending_acquire_targets,
         "sizes": room.pending_acquire_sizes,
         "ordering": room.pending_acquire_ordering,
+        "choosing_survivor": bool(room.pending_acquire_survivor_choices),
     }
+    if room.pending_acquire_survivor_choices:
+        return {
+            **base_state,
+            "active_target": None,
+            "active_player_id": room.pending_acquire_starter_id,
+            "active_player_name": "",
+            "stock_count": 0,
+        }
     if room.pending_acquire_ordering:
         return {
             **base_state,
@@ -459,9 +593,11 @@ def pending_acquire_state(room: Room) -> dict | None:
 
 def clear_pending_acquire(room: Room) -> None:
     room.pending_acquire_starter_id = None
+    room.pending_acquire_survivor_choices = []
     room.pending_acquire_survivor = None
     room.pending_acquire_targets = []
     room.pending_acquire_sizes = {}
+    room.pending_acquire_reward_details = []
     room.pending_acquire_ordering = False
     room.pending_acquire_player_order = []
     room.pending_acquire_player_index = 0
@@ -480,6 +616,14 @@ def choose_acquire_survivor(room: Room, companies: set[str]) -> str:
     return max(
         companies,
         key=lambda color: (sizes[color], -STOCK_COLORS.index(color)),
+    )
+
+
+def acquire_survivor_choices(companies: set[str], sizes: dict[str, int]) -> list[str]:
+    largest_size = max(sizes[color] for color in companies)
+    return sorted(
+        (color for color in companies if sizes[color] == largest_size),
+        key=STOCK_COLORS.index,
     )
 
 
@@ -529,6 +673,7 @@ def advance_acquire_step(room: Room) -> None:
 def complete_acquire(room: Room) -> None:
     survivor = room.pending_acquire_survivor
     targets = list(room.pending_acquire_targets)
+    reward_details = list(room.pending_acquire_reward_details)
     if survivor:
         for value in room.board.values():
             if not isinstance(value, dict):
@@ -545,14 +690,14 @@ def complete_acquire(room: Room) -> None:
     clear_pending_acquire(room)
     if starter:
         room.pending_finish_player_id = starter.id
-        removed = remove_invalid_tiles(room)
+        invalid_tiles = remove_invalid_tiles(room)
         mark_end_pending_if_needed(room)
         room.last_action = (
             f"Acquire finished. {survivor} is the surviving company. "
+            f"Shareholder rewards: {describe_reward_details(reward_details)} "
             "Buy stocks or click Finish."
         )
-        if removed:
-            room.last_action += f" Removed {removed} invalid tile{'' if removed == 1 else 's'}."
+        append_invalid_tiles_notice(room, invalid_tiles)
         if room.end_pending:
             room.last_action += " Game will end when this turn is finished."
 
@@ -797,7 +942,7 @@ def buy_stocks(room_id: str):
                 return jsonify({"error": "The game has not started yet."}), 400
             if room.game_over:
                 return jsonify({"error": "The game is already over."}), 400
-            if room.pending_acquire_survivor:
+            if pending_acquire_state(room):
                 return jsonify({"error": "Resolve the Acquire first."}), 400
             if room.pending_found_player_id:
                 return jsonify({"error": "Resolve the company founding decision first."}), 400
@@ -877,7 +1022,7 @@ def place_tile(room_id: str):
             if room.game_over:
                 return jsonify({"error": "The game is already over."}), 400
             remove_invalid_tiles(room)
-            if room.pending_acquire_survivor:
+            if pending_acquire_state(room):
                 return jsonify({"error": "Resolve the Acquire first."}), 400
             if room.pending_found_player_id:
                 return jsonify({"error": "Resolve the company founding decision first."}), 400
@@ -891,7 +1036,7 @@ def place_tile(room_id: str):
                 return jsonify({"error": "That tile has already been placed."}), 400
             if tile_connects_super_company(room, tile):
                 remove_invalid_tiles(room)
-                return jsonify({"error": "That tile connects to a super company and cannot be played."}), 400
+                return jsonify({"error": "That tile connects two super companies and cannot be played."}), 400
             if tile not in current_player.tiles:
                 return jsonify({"error": "That tile is not in your rack."}), 400
 
@@ -905,32 +1050,49 @@ def place_tile(room_id: str):
             tile_label = display_tile(tile)
             if len(adjacent_company_colors) >= 2:
                 sizes_before_acquire = company_sizes(room)
-                if any(sizes_before_acquire[color] > SUPER_COMPANY_SIZE for color in adjacent_company_colors):
-                    remove_invalid_tiles(room)
-                    return jsonify({"error": "A super company cannot be acquired."}), 400
-                survivor = choose_acquire_survivor(room, adjacent_company_colors)
-                targets = ordered_acquire_targets(
-                    adjacent_company_colors,
-                    survivor,
-                    sizes_before_acquire,
+                survivor_choices = acquire_survivor_choices(adjacent_company_colors, sizes_before_acquire)
+                survivor = None if len(survivor_choices) > 1 else survivor_choices[0]
+                targets = (
+                    ordered_acquire_targets(adjacent_company_colors, survivor, sizes_before_acquire)
+                    if survivor
+                    else []
+                )
+                acquire_reward_details = (
+                    [
+                        detail
+                        for target in targets
+                        for detail in pay_shareholder_rewards(room, target)
+                    ]
+                    if survivor
+                    else []
                 )
                 for connected_tile in connected:
                     if connected_tile in room.board and isinstance(room.board[connected_tile], dict):
                         room.board[connected_tile]["company"] = "acquire"
                 room.pending_acquire_starter_id = current_player.id
+                room.pending_acquire_survivor_choices = survivor_choices if len(survivor_choices) > 1 else []
                 room.pending_acquire_survivor = survivor
                 room.pending_acquire_targets = targets
                 room.pending_acquire_sizes = {
                     color: sizes_before_acquire[color]
                     for color in adjacent_company_colors
                 }
-                room.pending_acquire_ordering = acquire_order_has_tie(targets, sizes_before_acquire)
+                room.pending_acquire_reward_details = acquire_reward_details
+                room.pending_acquire_ordering = bool(
+                    survivor and acquire_order_has_tie(targets, sizes_before_acquire)
+                )
                 room.pending_acquire_player_order = reverse_turn_order(room)
                 room.pending_acquire_player_index = 0
                 room.pending_acquire_target_index = 0
                 room.pending_finish_player_id = None
                 pending = pending_acquire_state(room)
-                if room.pending_acquire_ordering:
+                if room.pending_acquire_survivor_choices:
+                    room.last_action = (
+                        f"{current_player.name} placed {tile_label}. "
+                        f"Acquire: tied companies {', '.join(survivor_choices)} are largest. "
+                        f"{current_player.name} must choose the surviving company."
+                    )
+                elif room.pending_acquire_ordering:
                     tied_sizes = sorted({
                         sizes_before_acquire[target]
                         for target in targets
@@ -939,22 +1101,33 @@ def place_tile(room_id: str):
                     room.last_action = (
                         f"{current_player.name} placed {tile_label}. "
                         f"Acquire: {survivor} acquires {', '.join(targets)}. "
+                        f"Shareholder rewards: {describe_reward_details(acquire_reward_details)} "
                         f"{current_player.name} must choose acquire order for tied size"
                         f"{'' if len(tied_sizes) == 1 else 's'} {', '.join(map(str, tied_sizes))}."
                     )
                 else:
                     advance_acquire_step(room)
                     pending = pending_acquire_state(room)
-                if pending and not room.pending_acquire_ordering:
+                if (
+                    pending
+                    and not room.pending_acquire_ordering
+                    and not room.pending_acquire_survivor_choices
+                ):
                     room.last_action = (
                         f"{current_player.name} placed {tile_label}. "
                         f"Acquire: {survivor} acquires {', '.join(targets)}. "
+                        f"Shareholder rewards: {describe_reward_details(acquire_reward_details)} "
                         f"Notice, It's {pending['active_player_name']}'s turn to process the stocks!"
                     )
-                elif not room.pending_acquire_ordering:
+                elif (
+                    not room.pending_acquire_ordering
+                    and not room.pending_acquire_survivor_choices
+                    and room.pending_acquire_survivor
+                ):
                     room.last_action = (
                         f"{current_player.name} placed {tile_label}. "
-                        f"Acquire finished. {survivor} is the surviving company."
+                        f"Acquire finished. {survivor} is the surviving company. "
+                        f"Shareholder rewards: {describe_reward_details(acquire_reward_details)}"
                     )
             elif len(adjacent_company_colors) == 1:
                 company = next(iter(adjacent_company_colors))
@@ -988,8 +1161,7 @@ def place_tile(room_id: str):
 
             removed = remove_invalid_tiles(room)
             mark_end_pending_if_needed(room)
-            if removed:
-                room.last_action += f" Removed {removed} invalid tile{'' if removed == 1 else 's'}."
+            append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
             state = build_public_room_state(room, player_id)
@@ -1016,7 +1188,7 @@ def found_company(room_id: str):
                 return jsonify({"error": "The game has not started yet."}), 400
             if room.game_over:
                 return jsonify({"error": "The game is already over."}), 400
-            if room.pending_acquire_survivor:
+            if pending_acquire_state(room):
                 return jsonify({"error": "Resolve the Acquire first."}), 400
             player = next((player for player in room.players if player.id == player_id), None)
             if not player:
@@ -1052,10 +1224,73 @@ def found_company(room_id: str):
             removed = remove_invalid_tiles(room)
             mark_end_pending_if_needed(room)
             room.last_action = f"{action} Buy stocks or click Finish."
-            if removed:
-                room.last_action += f" Removed {removed} invalid tile{'' if removed == 1 else 's'}."
+            append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
+            state = build_public_room_state(room, player_id)
+            broadcast_room_state(room)
+    except RoomNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify(state)
+
+
+@app.post("/api/rooms/<room_id>/set_acquire_survivor")
+def set_acquire_survivor(room_id: str):
+    data = request.get_json(silent=True) or {}
+    player_id = data.get("player_id")
+    survivor = (data.get("survivor") or "").lower()
+
+    try:
+        with room_lock:
+            room = get_room_or_404(room_id)
+            if not room.pending_acquire_survivor_choices:
+                return jsonify({"error": "No surviving-company decision is waiting."}), 400
+            if room.pending_acquire_starter_id != player_id:
+                return jsonify({"error": "Only the Acquire starter can choose the survivor."}), 403
+            if survivor not in room.pending_acquire_survivor_choices:
+                return jsonify({"error": "Choose one of the tied largest companies."}), 400
+
+            sizes = room.pending_acquire_sizes
+            companies = set(sizes)
+            targets = ordered_acquire_targets(companies, survivor, sizes)
+            reward_details = [
+                detail
+                for target in targets
+                for detail in pay_shareholder_rewards(room, target)
+            ]
+            room.pending_acquire_survivor = survivor
+            room.pending_acquire_survivor_choices = []
+            room.pending_acquire_targets = targets
+            room.pending_acquire_reward_details = reward_details
+            room.pending_acquire_ordering = acquire_order_has_tie(targets, sizes)
+            room.pending_acquire_player_index = 0
+            room.pending_acquire_target_index = 0
+
+            if room.pending_acquire_ordering:
+                tied_sizes = sorted({
+                    sizes[target]
+                    for target in targets
+                    if sum(1 for other in targets if sizes[other] == sizes[target]) > 1
+                })
+                room.last_action = (
+                    f"{survivor} chosen as the surviving company. "
+                    f"Shareholder rewards: {describe_reward_details(reward_details)} "
+                    f"Choose acquire order for tied size"
+                    f"{'' if len(tied_sizes) == 1 else 's'} {', '.join(map(str, tied_sizes))}."
+                )
+            else:
+                advance_acquire_step(room)
+                pending = pending_acquire_state(room)
+                if pending:
+                    room.last_action = (
+                        f"{survivor} chosen as the surviving company. "
+                        f"Shareholder rewards: {describe_reward_details(reward_details)} "
+                        f"Notice, It's {pending['active_player_name']}'s turn to process the stocks!"
+                    )
+                elif room.pending_acquire_survivor:
+                    room.last_action = f"{survivor} chosen as the surviving company."
+
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1201,7 +1436,7 @@ def finish_turn(room_id: str):
                 return jsonify({"error": "The game has not started yet."}), 400
             if room.game_over:
                 return jsonify({"error": "The game is already over."}), 400
-            if room.pending_acquire_survivor:
+            if pending_acquire_state(room):
                 return jsonify({"error": "Resolve the Acquire first."}), 400
             if room.pending_found_player_id:
                 return jsonify({"error": "Resolve the company founding decision first."}), 400
