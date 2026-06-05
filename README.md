@@ -1,6 +1,9 @@
-# Hotel Merger Game Prototype
+# Acquire Board Game
 
-This repository is a beginner-friendly starter for a private, browser-based multiplayer board game inspired by hotel-merger gameplay. It is intentionally small:
+![Acquire board game screenshot](image.png)
+
+
+This repository is a private, browser-based multiplayer board game inspired by hotel-merger gameplay. It is intentionally small:
 
 - Python `Flask` backend
 - WebSocket updates with `Flask-SocketIO`
@@ -8,7 +11,7 @@ This repository is a beginner-friendly starter for a private, browser-based mult
 - In-memory room state
 - Turn-based shared board with tile dealing
 
-It is not the full commercial board game rules yet. The current milestone is:
+Current features include:
 
 - use a lobby page to create or join a room
 - validate player names as 1-10 letters or numbers
@@ -18,6 +21,13 @@ It is not the full commercial board game rules yet. The current milestone is:
 - move to a separate board page after start
 - place tiles on a 9x12 shared board
 - push room updates instantly with WebSockets
+- found companies and expand company groups
+- buy up to 3 stocks after tile placement resolves
+- resolve acquisitions with survivor/order choices for tied company sizes
+- pay shareholder rewards during acquisitions and final scoring
+- sell, trade, or keep stocks after an acquired company is resolved
+- detect invalid tiles that would connect two super companies
+- show final rankings with a closable score panel
 
 ## 1. Run locally
 
@@ -90,7 +100,7 @@ Right now the game state is stored only in server memory. That means:
 
 For a real version, the next steps are:
 
-1. add full chain and merger rules
-2. add stock buying and scoring
-3. move room state into a database
-4. add private invite links and reconnection support
+1. move room state into a database
+2. add saved games
+3. add private invite links and reconnection support
+4. add stronger production monitoring and persistence
