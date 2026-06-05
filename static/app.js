@@ -11,6 +11,7 @@ const socket = io();
 
 const elements = {
   playerName: document.getElementById("player-name"),
+  inviteCode: document.getElementById("invite-code"),
   roomCode: document.getElementById("room-code"),
   status: document.getElementById("status"),
   roomId: document.getElementById("room-id"),
@@ -27,6 +28,10 @@ function setStatus(message, isError = false) {
 
 function getPlayerName() {
   return elements.playerName.value.trim();
+}
+
+function getInviteCode() {
+  return elements.inviteCode.value.trim();
 }
 
 function validateNameOrThrow(name) {
@@ -89,12 +94,19 @@ function subscribeToRoomState() {
 
 async function createRoom() {
   const playerName = getPlayerName();
+  const invitationCode = getInviteCode();
 
   try {
     validateNameOrThrow(playerName);
+    if (!invitationCode) {
+      throw new Error("Enter the invitation code to create a room.");
+    }
     const data = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ player_name: playerName }),
+      body: JSON.stringify({
+        player_name: playerName,
+        invitation_code: invitationCode,
+      }),
     });
     state.roomId = data.room_id;
     state.playerId = data.player_id;

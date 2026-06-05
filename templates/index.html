@@ -7,38 +7,54 @@
     <link rel="stylesheet" href="/static/style.css">
   </head>
   <body>
-    <main class="page">
-      <section class="hero">
-        <h1>Acquire</h1>
-      </section>
-
-      <section class="panel controls">
-        <div class="field-row">
-          <label for="player-name">Your name</label>
-          <input id="player-name" placeholder="Letters and numbers only" maxlength="10">
-        </div>
-        <div class="button-row">
-          <button id="create-room">Create Room</button>
-        </div>
-        <div class="join-row">
-          <input id="room-code" placeholder="Room code, e.g. AB12CD" maxlength="6">
-          <button id="join-room">Join Room</button>
-        </div>
-        <p class="status" id="status">Create a room or join one.</p>
-      </section>
-
-      <section class="panel lobby-panel">
-        <div class="room-header">
-          <div>
-            <p class="small-label">Room</p>
-            <h2 id="room-id">Not connected</h2>
-          </div>
-          <button id="start-game" disabled>Start Game</button>
+    <main class="page page--lobby">
+      <section class="panel room-shell">
+        <div class="room-shell-header">
+          <p class="small-label">Room Lobby</p>
+          <h1>Acquire</h1>
         </div>
 
-        <div class="players-block">
-          <h3>Players In Room</h3>
-          <ul id="players"></ul>
+        <div class="room-shell-body">
+          <section class="room-section room-controls-panel">
+            <div class="field-row">
+              <label for="player-name">Your name</label>
+              <input id="player-name" placeholder="Letters and numbers only" maxlength="10">
+            </div>
+
+            <div class="field-row">
+              <label for="invite-code">Invitation code</label>
+              <input id="invite-code" placeholder="Required to create a room" maxlength="24">
+            </div>
+
+            <div class="button-row room-create-row">
+              <button id="create-room">Create Room</button>
+            </div>
+
+            <div class="join-block">
+              <label for="room-code">Room code</label>
+              <div class="join-row">
+                <input id="room-code" placeholder="Room code, e.g. AB12CD" maxlength="6">
+                <button id="join-room">Join Room</button>
+              </div>
+            </div>
+
+            <p class="status" id="status">Enter your name and invitation code to create a room, or join with a room code.</p>
+          </section>
+
+          <section class="room-section room-details-panel">
+            <div class="room-header">
+              <div>
+                <p class="small-label">Room</p>
+                <h2 id="room-id">Not connected</h2>
+              </div>
+              <button id="start-game" disabled>Start Game</button>
+            </div>
+
+            <div class="players-block">
+              <h3>Players In Room</h3>
+              <ul id="players"></ul>
+            </div>
+          </section>
         </div>
       </section>
     </main>

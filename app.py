@@ -18,6 +18,7 @@ STARTING_CASH = 6000
 STARTING_BANK_SHARES = 25
 SUPER_COMPANY_SIZE = 10
 GAME_END_COMPANY_SIZE = 41
+ROOM_CREATION_INVITE_CODE = "evanston"
 COMPANY_LEVELS = {
     "low": ["red", "yellow"],
     "mid": ["green", "pink", "purple"],
@@ -819,10 +820,13 @@ def handle_disconnect():
 def create_room():
     data = request.get_json(silent=True) or {}
     player_name = (data.get("player_name") or "").strip()
+    invitation_code = (data.get("invitation_code") or "").strip().lower()
 
     with room_lock:
         try:
             validate_player_name(player_name)
+            if invitation_code != ROOM_CREATION_INVITE_CODE:
+                raise ValueError("Invalid invitation code.")
             room_id = new_room_id()
             player = Player(id=uuid.uuid4().hex, name=player_name)
             room = Room(id=room_id, players=[player], last_action=f"{player_name} created the room.")
