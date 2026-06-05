@@ -1,5 +1,6 @@
 # Acquire Board Game
 
+![alt text](image-1.png)
 ![alt text](image.png)
 
 
@@ -46,7 +47,7 @@ Then open:
 http://127.0.0.1:5000
 ```
 
-Open that URL in two browser windows, create a room in one, and join it from the other.
+Open that URL in two browser windows, create a room in one (**invitation code : evanston**), and join it from the other.
 
 ## 2. What the files do
 
