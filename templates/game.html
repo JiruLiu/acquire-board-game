@@ -13,47 +13,14 @@
       </section>
 
       <section class="game-layout">
-        <aside class="game-leftbar">
-          <section class="panel holdings-panel">
-            <div class="holdings-header">
-              <h3>Money & Stocks</h3>
+        <aside class="game-sidebar">
+          <section id="found-panel" class="panel found-panel">
+            <div class="found-company-header">
+              <h3>Found a Company</h3>
+              <button id="found-button" class="found-button" disabled>Found</button>
             </div>
-
-            <div class="holdings-table-wrap">
-              <table class="holdings-table">
-                <thead>
-                  <tr>
-                    <th>Player</th>
-                    <th>Money</th>
-                    <th><span class="dot red"></span></th>
-                    <th><span class="dot yellow"></span></th>
-                    <th><span class="dot green"></span></th>
-                    <th><span class="dot pink"></span></th>
-                    <th><span class="dot purple"></span></th>
-                    <th><span class="dot orange"></span></th>
-                    <th><span class="dot blue"></span></th>
-                  </tr>
-                </thead>
-                <tbody id="holdings-body"></tbody>
-              </table>
-            </div>
-          </section>
-
-          <section class="panel copy-link-panel">
-            <button id="copy-link-button" class="copy-link-button" type="button">Copy Link</button>
-          </section>
-
-          <section id="buying-panel" class="panel buying-panel">
-            <div class="buying-header">
-              <h3>Buy</h3>
-              <span id="buying-count" class="buying-count">0 / 3</span>
-            </div>
-            <p id="buying-note" class="panel-note">Buy opens after your tile resolves.</p>
-            <div id="buying-options" class="buying-options"></div>
-            <div class="buying-footer">
-              <span id="buying-total" class="buying-total">Total: $0</span>
-              <button id="buy-button" class="buy-button" disabled>Buy Stocks</button>
-            </div>
+            <p id="found-note" class="panel-note">No founding decision waiting.</p>
+            <div id="company-options" class="company-options"></div>
           </section>
 
           <section id="trade-panel" class="panel trade-panel">
@@ -80,52 +47,15 @@
                 <strong id="trade-count">0</strong>
                 <button id="trade-plus" class="trade-step" type="button" disabled>+</button>
               </div>
-              <div class="trade-row">
+              <div class="trade-row trade-row-static">
                 <span>Keep</span>
                 <strong id="keep-count">0</strong>
               </div>
-            </div>
-            <div class="trade-footer">
-              <span id="trade-result" class="trade-result">$0, +0 stock</span>
-              <button id="process-trade-button" class="trade-button" disabled>Process</button>
-            </div>
-          </section>
-        </aside>
-
-        <section class="game-stage">
-          <section class="panel board-shell">
-            <div class="board-wrap">
-              <div id="board" class="board"></div>
-            </div>
-          </section>
-
-          <section class="panel rack-panel">
-            <div class="rack-block">
-              <div class="rack-body">
-                <div id="tile-rack" class="tile-rack"></div>
-                <button id="place-button" class="place-button" disabled>Place</button>
+              <div class="trade-footer">
+                <span id="trade-result" class="trade-result">$0, +0 stock</span>
+                <button id="process-trade-button" class="trade-button" disabled>Proceed</button>
               </div>
-              <button id="finish-button" class="finish-button" disabled>Finish Turn</button>
             </div>
-          </section>
-        </section>
-
-        <aside class="game-sidebar">
-          <section class="panel status-panel">
-            <div class="status-heading">
-              <p class="small-label">Status</p>
-              <button id="show-ending-button" class="show-ending-button" type="button" hidden>Final Scores</button>
-            </div>
-            <p class="status" id="status">Connecting to room.</p>
-          </section>
-
-          <section id="found-panel" class="panel found-panel">
-            <div class="found-company-header">
-              <h3>Found a Company</h3>
-              <button id="found-button" class="found-button" disabled>Found</button>
-            </div>
-            <p id="found-note" class="panel-note">No founding decision waiting.</p>
-            <div id="company-options" class="company-options"></div>
           </section>
 
           <section id="acquire-order-panel" class="panel acquire-order-panel">
@@ -134,7 +64,16 @@
               <button id="acquire-order-button" class="acquire-order-button" disabled>Set</button>
             </div>
             <p id="acquire-order-note" class="acquire-order-note">No Acquire order needed.</p>
-            <div id="acquire-order-list" class="acquire-order-list"></div>
+            <div class="acquire-order-layout">
+              <div class="acquire-order-column">
+                <p class="acquire-column-label">Survivor</p>
+                <div id="acquire-survivor-list" class="acquire-survivor-list"></div>
+              </div>
+              <div class="acquire-order-column">
+                <p class="acquire-column-label">Acquire Order</p>
+                <div id="acquire-order-list" class="acquire-order-list"></div>
+              </div>
+            </div>
           </section>
 
           <section class="panel share-panel">
@@ -166,9 +105,9 @@
                       </span>
                     </th>
                     <th>Price</th>
-                    <th>1st Reward</th>
-                    <th>2nd Reward</th>
-                    <th>3rd Reward</th>
+                    <th>1st</th>
+                    <th>2nd</th>
+                    <th>3rd</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -186,6 +125,76 @@
                 </tbody>
               </table>
             </div>
+          </section>
+        </aside>
+
+        <section class="game-stage">
+          <section class="panel board-shell">
+            <div class="board-wrap">
+              <div id="board" class="board"></div>
+            </div>
+          </section>
+
+          <section class="panel rack-panel">
+            <div class="rack-block">
+              <div class="rack-body">
+                <div id="tile-rack" class="tile-rack"></div>
+                <button id="place-button" class="place-button" disabled>Place</button>
+              </div>
+              <button id="finish-button" class="finish-button" disabled>Finish Turn</button>
+            </div>
+          </section>
+        </section>
+
+        <aside class="game-leftbar">
+          <section class="panel holdings-panel">
+            <div class="holdings-header">
+              <h3>Money & Stocks</h3>
+            </div>
+
+            <div class="holdings-table-wrap">
+              <table class="holdings-table">
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Money</th>
+                    <th><span class="dot red"></span></th>
+                    <th><span class="dot yellow"></span></th>
+                    <th><span class="dot green"></span></th>
+                    <th><span class="dot pink"></span></th>
+                    <th><span class="dot purple"></span></th>
+                    <th><span class="dot orange"></span></th>
+                    <th><span class="dot blue"></span></th>
+                  </tr>
+                </thead>
+                <tbody id="holdings-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section id="buying-panel" class="panel buying-panel">
+            <div class="buying-header">
+              <h3>Buy</h3>
+              <span id="buying-count" class="buying-count">0 / 3</span>
+            </div>
+            <p id="buying-note" class="panel-note">Buy opens after your tile resolves.</p>
+            <div id="buying-options" class="buying-options"></div>
+            <div class="buying-footer">
+              <button id="buy-button" class="buy-button" disabled>Buy</button>
+              <div id="buying-total" class="buying-total">
+                <span class="buying-total-label">Cost</span>
+                <strong id="buying-total-value" class="buying-total-value">$0</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel status-panel">
+            <div class="status-heading">
+              <p class="small-label">Status</p>
+              <button id="copy-link-button" class="copy-link-button" type="button">Copy Link</button>
+              <button id="show-ending-button" class="show-ending-button" type="button" hidden>Final Scores</button>
+            </div>
+            <p class="status" id="status">Connecting to room.</p>
           </section>
         </aside>
       </section>

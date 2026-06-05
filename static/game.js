@@ -32,6 +32,7 @@ const elements = {
   buyingOptions: document.getElementById("buying-options"),
   buyingCount: document.getElementById("buying-count"),
   buyingTotal: document.getElementById("buying-total"),
+  buyingTotalValue: document.getElementById("buying-total-value"),
   buyingNote: document.getElementById("buying-note"),
   buyButton: document.getElementById("buy-button"),
   tradePanel: document.getElementById("trade-panel"),
@@ -56,6 +57,7 @@ const elements = {
   acquireOrderPanel: document.getElementById("acquire-order-panel"),
   acquireOrderButton: document.getElementById("acquire-order-button"),
   acquireOrderNote: document.getElementById("acquire-order-note"),
+  acquireSurvivorList: document.getElementById("acquire-survivor-list"),
   acquireOrderList: document.getElementById("acquire-order-list"),
   endingPanel: document.getElementById("ending-panel"),
   endingWinner: document.getElementById("ending-winner"),
@@ -382,6 +384,7 @@ function renderRack() {
       if (!canPlaceTile(tile)) return;
       state.selectedTile = tile;
       renderRack();
+      renderBoard();
     });
     elements.tileRack.appendChild(chip);
   }
@@ -418,9 +421,17 @@ function renderBoard() {
       } else {
         button.innerHTML = `<span class="coord">${tileLabel}</span>`;
         button.disabled = !canPlaceTile(tile);
+        if (tile === state.selectedTile) {
+          button.classList.add("target-selected");
+        }
       }
 
-      button.addEventListener("click", () => placeTile(tile));
+      button.addEventListener("click", () => {
+        if (!canPlaceTile(tile)) return;
+        state.selectedTile = tile;
+        renderRack();
+        renderBoard();
+      });
       elements.board.appendChild(button);
     }
   }
@@ -511,9 +522,16 @@ function displayTile(tile) {
   return `${tile.slice(1)}${tile[0]}`;
 }
 
+function displayPlayerName(name) {
+  if (!name) return "";
+  return String(name).slice(0, 8);
+}
+
 function stockCell(stocks, color) {
   const count = stocks?.[color] || 0;
-  return count ? String(count) : "";
+  return `
+    <td class="stock-count stock-${color}${count ? " is-present" : ""}">${count ? String(count) : ""}</td>
+  `;
 }
 
 function renderHoldings() {
@@ -529,12 +547,12 @@ function renderHoldings() {
       row.classList.add("current-player-row");
     }
     const stockCells = STOCK_COLORS
-      .map((color) => `<td>${stockCell(player?.stocks, color)}</td>`)
+      .map((color) => stockCell(player?.stocks, color))
       .join("");
 
     row.innerHTML = `
-      <td class="player-name-cell">${player?.name || ""}</td>
-      <td>${player ? formatMoney(player.money) : ""}</td>
+      <td class="player-name-cell" title="${escapeHtml(player?.name || "")}">${escapeHtml(displayPlayerName(player?.name))}</td>
+      <td class="money-cell">${player ? formatMoney(player.money) : ""}</td>
       ${stockCells}
     `;
     elements.holdingsBody.appendChild(row);
@@ -543,11 +561,11 @@ function renderHoldings() {
   const bankRow = document.createElement("tr");
   bankRow.className = "bank-row";
   const bankStockCells = STOCK_COLORS
-    .map((color) => `<td>${stockCell(bankStocks, color)}</td>`)
+    .map((color) => stockCell(bankStocks, color))
     .join("");
   bankRow.innerHTML = `
     <td>Bank</td>
-    <td></td>
+    <td class="money-cell"></td>
     ${bankStockCells}
   `;
   elements.holdingsBody.appendChild(bankRow);
@@ -596,14 +614,12 @@ function renderBuying() {
     row.className = `buying-row${isAvailable ? "" : " disabled"}`;
     row.innerHTML = `
       <span class="buying-company"><span class="dot ${color}"></span></span>
-      <span class="buying-price">${price ? formatMoney(price) : "--"}</span>
-      <span class="buying-bank">Bank: ${available || ""}</span>
-      <button class="buying-step" type="button" ${!isAvailable || selected <= 0 ? "disabled" : ""}>-</button>
-      <span class="buying-quantity">${selected || ""}</span>
-      <button class="buying-step" type="button" ${canAdd ? "" : "disabled"}>+</button>
+      <span class="buying-quantity">${selected}</span>
+      <button class="buying-step buying-step-plus" type="button" ${canAdd ? "" : "disabled"}>+</button>
+      <button class="buying-step buying-step-minus" type="button" ${!isAvailable || selected <= 0 ? "disabled" : ""}>-</button>
     `;
 
-    const [minusButton, plusButton] = row.querySelectorAll("button");
+    const [plusButton, minusButton] = row.querySelectorAll("button");
     minusButton.addEventListener("click", () => {
       state.buySelection[color] = Math.max(0, selected - 1);
       renderBuying();
@@ -617,7 +633,7 @@ function renderBuying() {
   }
 
   elements.buyingCount.textContent = `${boughtThisTurn + selectedCount} / 3`;
-  elements.buyingTotal.textContent = `Total: ${formatMoney(selectedTotal)}`;
+  elements.buyingTotalValue.textContent = formatMoney(selectedTotal);
   elements.buyButton.disabled = !isBuyingTurn
     || selectedCount <= 0
     || boughtThisTurn + selectedCount > 3
@@ -686,7 +702,7 @@ function renderTrade() {
   elements.sellCount.textContent = String(sell);
   elements.tradeCount.textContent = String(trade);
   elements.keepCount.textContent = String(keep);
-  elements.tradeResult.textContent = `${formatMoney(saleMoney)}, +${survivorStock} ${survivor || "stock"}`;
+  elements.tradeResult.textContent = `${formatMoney(saleMoney)}, +${survivorStock} stock`;
 
   elements.sellMinus.disabled = !isActivePlayer || sell <= 0;
   elements.sellPlus.disabled = !canAddSell;
@@ -717,6 +733,7 @@ function renderAcquireOrder() {
     state.acquireOrder = [...pending.targets];
   }
 
+  elements.acquireSurvivorList.innerHTML = "";
   elements.acquireOrderList.innerHTML = "";
   if (!pending) {
     elements.acquireOrderNote.textContent = "No Acquire order needed.";
@@ -735,32 +752,40 @@ function renderAcquireOrder() {
     elements.acquireOrderNote.textContent = `Survivor: ${pending.survivor || "--"}`;
   }
 
-  if (isChoosingSurvivor) {
-    for (const color of pending.survivor_choices || []) {
+  const order = state.acquireOrder.length ? state.acquireOrder : (pending?.targets || []);
+
+  const survivorChoices = isChoosingSurvivor
+    ? (pending.survivor_choices || [])
+    : (pending?.survivor ? [pending.survivor] : []);
+  const highlightedSurvivor = isChoosingSurvivor ? state.selectedSurvivor : (pending?.survivor || null);
+
+  if (survivorChoices.length) {
+    for (const color of survivorChoices) {
       const size = sizes[color] || 0;
       const row = document.createElement("button");
-      row.className = `acquire-survivor-row${color === state.selectedSurvivor ? " selected" : ""}`;
+      row.className = `acquire-survivor-row${color === highlightedSurvivor ? " selected" : ""}`;
       row.type = "button";
-      row.disabled = !isStarter;
+      row.disabled = !isChoosingSurvivor || !isStarter;
       row.innerHTML = `
         <span class="dot ${color}"></span>
-        <span>${color}</span>
-        <span>Size ${size}</span>
+        <span class="acquire-order-name">${color}</span>
+        <span class="acquire-order-size">Size ${size}</span>
       `;
       row.addEventListener("click", () => {
-        if (!isStarter) return;
+        if (!isChoosingSurvivor || !isStarter) return;
         state.selectedSurvivor = color;
         renderAcquireOrder();
       });
-      elements.acquireOrderList.appendChild(row);
+      elements.acquireSurvivorList.appendChild(row);
     }
-    elements.acquireOrderButton.textContent = "Set";
-    elements.acquireOrderButton.disabled = !isStarter || !state.selectedSurvivor;
-    return;
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "acquire-empty";
+    empty.textContent = "None";
+    elements.acquireSurvivorList.appendChild(empty);
   }
 
   elements.acquireOrderButton.textContent = "Set";
-  const order = state.acquireOrder.length ? state.acquireOrder : (pending?.targets || []);
   for (const [index, color] of order.entries()) {
     const size = sizes[color] || 0;
     const previousColor = order[index - 1];
@@ -771,10 +796,10 @@ function renderAcquireOrder() {
     row.className = `acquire-order-row${isOrdering ? "" : " disabled"}`;
     row.innerHTML = `
       <span class="dot ${color}"></span>
-      <span>${color}</span>
-      <span>Size ${size}</span>
-      <button type="button" ${canMoveUp ? "" : "disabled"}>Up</button>
-      <button type="button" ${canMoveDown ? "" : "disabled"}>Down</button>
+      <span class="acquire-order-name">${color}</span>
+      <span class="acquire-order-size">Size ${size}</span>
+      <button type="button" aria-label="Move up" ${canMoveUp ? "" : "disabled"}>&uarr;</button>
+      <button type="button" aria-label="Move down" ${canMoveDown ? "" : "disabled"}>&darr;</button>
     `;
 
     const [upButton, downButton] = row.querySelectorAll("button");
@@ -796,7 +821,16 @@ function renderAcquireOrder() {
     elements.acquireOrderList.appendChild(row);
   }
 
-  elements.acquireOrderButton.disabled = !isOrdering || !isStarter;
+  if (!order.length) {
+    const empty = document.createElement("div");
+    empty.className = "acquire-empty";
+    empty.textContent = "None";
+    elements.acquireOrderList.appendChild(empty);
+  }
+
+  const canSetSurvivor = isChoosingSurvivor && isStarter && !!state.selectedSurvivor;
+  const canSetOrder = isOrdering && isStarter;
+  elements.acquireOrderButton.disabled = !(canSetSurvivor || canSetOrder);
 }
 
 function renderActionPanels() {
