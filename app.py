@@ -486,18 +486,7 @@ def build_final_rankings(room: Room) -> list[dict]:
 
 
 def liquidate_and_rank(room: Room) -> None:
-    prices = share_prices(room)
-    _reward_details, reward_totals = final_shareholder_rewards(room)
     room.final_rankings = build_final_rankings(room)
-    for player in room.players:
-        player.money += reward_totals.get(player.id, 0)
-        for color in STOCK_COLORS:
-            count = player.stocks.get(color, 0)
-            if count:
-                player.money += count * (prices.get(color) or 0)
-                room.bank_stocks[color] += count
-                player.stocks[color] = 0
-
     room.winner = room.final_rankings[0]["name"] if room.final_rankings else None
     room.game_over = True
     room.end_pending = False
@@ -769,6 +758,10 @@ def get_room_or_404(room_id: str) -> Room:
     return room
 
 
+def find_player(room: Room, player_id: str | None) -> Player | None:
+    return next((player for player in room.players if player.id == player_id), None)
+
+
 def validate_player_name(player_name: str) -> None:
     if not PLAYER_NAME_PATTERN.fullmatch(player_name):
         raise ValueError("Name must be 1-10 letters or numbers only.")
@@ -933,6 +926,91 @@ def start_room(room_id: str):
     return jsonify(state)
 
 
+def rack_sort_key(tile: str) -> tuple[int, int]:
+    return int(tile[1:]), ROWS.index(tile[0])
+
+
+def process_stock_purchases(
+    room: Room,
+    player_id: str,
+    purchases: dict,
+    require_purchase: bool = True,
+) -> tuple[Player, int, int, dict[str, int]]:
+    if not isinstance(purchases, dict):
+        raise ValueError("Stock purchases must be a list of company quantities.")
+    if pending_acquire_state(room):
+        raise ValueError("Resolve the Acquire first.")
+    if room.pending_found_player_id:
+        raise ValueError("Resolve the company founding decision first.")
+    if room.pending_finish_player_id != player_id:
+        raise PermissionError("Place a tile before buying stocks.")
+
+    player = room.players[room.current_turn]
+    if player.id != player_id:
+        raise PermissionError("It is not your turn.")
+
+    clean_purchases = {}
+    for color, quantity in purchases.items():
+        if color not in STOCK_COLORS:
+            raise ValueError("Unknown company color.")
+        try:
+            quantity = int(quantity)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Stock quantity must be a number.") from exc
+        if quantity < 0:
+            raise ValueError("Stock quantity cannot be negative.")
+        if quantity:
+            clean_purchases[color] = quantity
+
+    quantity_total = sum(clean_purchases.values())
+    if require_purchase and quantity_total <= 0:
+        raise ValueError("Choose at least one stock to buy.")
+    if room.stocks_bought_this_turn + quantity_total > 3:
+        raise ValueError("You can buy at most three stocks per turn.")
+
+    prices = share_prices(room)
+    total_cost = 0
+    for color, quantity in clean_purchases.items():
+        if not room.companies_found.get(color):
+            raise ValueError("That company has not been founded yet.")
+        if room.bank_stocks.get(color, 0) < quantity:
+            raise ValueError("The bank does not have enough shares.")
+        total_cost += (prices[color] or 0) * quantity
+
+    if player.money < total_cost:
+        raise ValueError("You do not have enough money.")
+
+    for color, quantity in clean_purchases.items():
+        player.stocks[color] += quantity
+        room.bank_stocks[color] -= quantity
+    player.money -= total_cost
+    room.stocks_bought_this_turn += quantity_total
+
+    return player, quantity_total, total_cost, clean_purchases
+
+
+@app.post("/api/rooms/<room_id>/sort_tiles")
+def sort_tiles(room_id: str):
+    data = request.get_json(silent=True) or {}
+    player_id = data.get("player_id")
+
+    try:
+        with room_lock:
+            room = get_room_or_404(room_id)
+            player = find_player(room, player_id)
+            if not player:
+                return jsonify({"error": "Player not found in this room."}), 403
+            active_tiles = sorted([tile for tile in player.tiles if tile], key=rack_sort_key)
+            empty_slots = [tile for tile in player.tiles if not tile]
+            player.tiles = active_tiles + empty_slots
+            state = build_public_room_state(room, player_id)
+            broadcast_room_state(room)
+    except RoomNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify(state)
+
+
 @app.post("/api/rooms/<room_id>/buy_stocks")
 def buy_stocks(room_id: str):
     data = request.get_json(silent=True) or {}
@@ -946,53 +1024,11 @@ def buy_stocks(room_id: str):
                 return jsonify({"error": "The game has not started yet."}), 400
             if room.game_over:
                 return jsonify({"error": "The game is already over."}), 400
-            if pending_acquire_state(room):
-                return jsonify({"error": "Resolve the Acquire first."}), 400
-            if room.pending_found_player_id:
-                return jsonify({"error": "Resolve the company founding decision first."}), 400
-            if room.pending_finish_player_id != player_id:
-                return jsonify({"error": "Place a tile before buying stocks."}), 403
-
-            player = room.players[room.current_turn]
-            if player.id != player_id:
-                return jsonify({"error": "It is not your turn."}), 403
-
-            clean_purchases = {}
-            for color, quantity in purchases.items():
-                if color not in STOCK_COLORS:
-                    return jsonify({"error": "Unknown company color."}), 400
-                try:
-                    quantity = int(quantity)
-                except (TypeError, ValueError):
-                    return jsonify({"error": "Stock quantity must be a number."}), 400
-                if quantity < 0:
-                    return jsonify({"error": "Stock quantity cannot be negative."}), 400
-                if quantity:
-                    clean_purchases[color] = quantity
-
-            quantity_total = sum(clean_purchases.values())
-            if quantity_total <= 0:
-                return jsonify({"error": "Choose at least one stock to buy."}), 400
-            if room.stocks_bought_this_turn + quantity_total > 3:
-                return jsonify({"error": "You can buy at most three stocks per turn."}), 400
-
-            prices = share_prices(room)
-            total_cost = 0
-            for color, quantity in clean_purchases.items():
-                if not room.companies_found.get(color):
-                    return jsonify({"error": "That company has not been founded yet."}), 400
-                if room.bank_stocks.get(color, 0) < quantity:
-                    return jsonify({"error": "The bank does not have enough shares."}), 400
-                total_cost += (prices[color] or 0) * quantity
-
-            if player.money < total_cost:
-                return jsonify({"error": "You do not have enough money."}), 400
-
-            for color, quantity in clean_purchases.items():
-                player.stocks[color] += quantity
-                room.bank_stocks[color] -= quantity
-            player.money -= total_cost
-            room.stocks_bought_this_turn += quantity_total
+            player, quantity_total, total_cost, clean_purchases = process_stock_purchases(
+                room,
+                player_id,
+                purchases,
+            )
 
             bought_text = ", ".join(
                 f"{quantity} {color}" for color, quantity in clean_purchases.items()
@@ -1005,6 +1041,10 @@ def buy_stocks(room_id: str):
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(state)
 
@@ -1432,6 +1472,7 @@ def trade_stocks(room_id: str):
 def finish_turn(room_id: str):
     data = request.get_json(silent=True) or {}
     player_id = data.get("player_id")
+    purchases = data.get("purchases") or {}
 
     try:
         with room_lock:
@@ -1451,8 +1492,28 @@ def finish_turn(room_id: str):
             if player.id != player_id:
                 return jsonify({"error": "It is not your turn."}), 403
 
+            quantity_total = 0
+            total_cost = 0
+            clean_purchases = {}
+            if purchases:
+                player, quantity_total, total_cost, clean_purchases = process_stock_purchases(
+                    room,
+                    player_id,
+                    purchases,
+                    require_purchase=False,
+                )
+
             if room.end_pending:
                 liquidate_and_rank(room)
+                if clean_purchases:
+                    bought_text = ", ".join(
+                        f"{quantity} {color}" for color, quantity in clean_purchases.items()
+                    )
+                    room.last_action = (
+                        f"{player.name} bought {bought_text} stock"
+                        f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
+                        f"Game over. {room.winner} wins."
+                    )
                 state = build_public_room_state(room, player_id)
                 broadcast_room_state(room)
                 return jsonify(state)
@@ -1474,10 +1535,23 @@ def finish_turn(room_id: str):
                 room.last_action = f"{player.name} finished. {next_name}'s turn."
                 if no_tile_buying:
                     room.last_action += f" {next_name} has no tiles and may buy stocks."
+            if clean_purchases:
+                bought_text = ", ".join(
+                    f"{quantity} {color}" for color, quantity in clean_purchases.items()
+                )
+                room.last_action = (
+                    f"{player.name} bought {bought_text} stock"
+                    f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
+                    f"{room.last_action}"
+                )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
+    except PermissionError as exc:
+        return jsonify({"error": str(exc)}), 403
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(state)
 

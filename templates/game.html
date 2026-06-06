@@ -9,7 +9,9 @@
   <body>
     <main class="page">
       <section class="hero game-hero">
+        <span id="action-prompt-left" class="action-prompt" hidden>Take your actions</span>
         <h1>Acquire</h1>
+        <span id="action-prompt-right" class="action-prompt" hidden>Take your actions</span>
       </section>
 
       <section class="game-layout">
@@ -138,10 +140,11 @@
           <section class="panel rack-panel">
             <div class="rack-block">
               <div class="rack-body">
+                <button id="sort-tiles-button" class="sort-tiles-button" type="button">Sort</button>
                 <div id="tile-rack" class="tile-rack"></div>
                 <button id="place-button" class="place-button" disabled>Place</button>
               </div>
-              <button id="finish-button" class="finish-button" disabled>Finish Turn</button>
+              <button id="finish-button" class="finish-button" disabled>Buy/Finish</button>
             </div>
           </section>
         </section>
@@ -180,7 +183,6 @@
             <p id="buying-note" class="panel-note">Buy opens after your tile resolves.</p>
             <div id="buying-options" class="buying-options"></div>
             <div class="buying-footer">
-              <button id="buy-button" class="buy-button" disabled>Buy</button>
               <div id="buying-total" class="buying-total">
                 <span class="buying-total-label">Cost</span>
                 <strong id="buying-total-value" class="buying-total-value">$0</strong>

@@ -23,6 +23,7 @@
   --rack-title-gap: 0.65vw;
   --rack-action-width: 5.5vw;
   --rack-action-gap: 1vw;
+  --rack-sort-width: 3.1vw;
   --finish-button-width: 15vw;
   --buying-panel-top: calc(var(--board-shell-pad) + (4 * (var(--board-tile-size) + var(--board-gap))));
   --buying-panel-height: 7.42vw;
@@ -74,7 +75,34 @@ body {
   width: 100%;
   max-width: 100%;
   margin: 0 auto 0.45vw;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2vw;
   text-align: center;
+}
+
+.action-prompt {
+  min-width: 15vw;
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 1.45vw;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+  background: linear-gradient(90deg, #d96b63, #e2be5b, #6faf7a, #6f9fd8, #9b7ac3, #efa3b3);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 0.03vw rgba(31, 42, 47, 0.35);
+  filter: drop-shadow(0 0.12vw 0.28vw rgba(255, 255, 255, 0.95))
+    drop-shadow(0 0 0.35vw rgba(215, 140, 44, 0.4));
+  animation: action-prompt-rainbow 0.9s linear infinite, action-prompt-blink 1s ease-in-out infinite;
+}
+
+.action-prompt[hidden] {
+  visibility: hidden;
+  display: inline-block;
 }
 
 .eyebrow,
@@ -585,6 +613,7 @@ button:disabled {
 .rack-body {
   position: relative;
   margin-top: 0;
+  padding-left: calc(var(--rack-sort-width) + var(--board-gap));
   padding-right: calc(var(--rack-action-width) + var(--rack-action-gap));
 }
 
@@ -622,6 +651,18 @@ button:disabled {
   color: white;
 }
 
+.sort-tiles-button {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: var(--rack-sort-width);
+  min-width: 0;
+  padding: 0.28vw 0.2vw;
+  color: white;
+  font-size: 0.62vw;
+}
+
 .finish-button {
   display: block;
   width: var(--finish-button-width);
@@ -630,6 +671,10 @@ button:disabled {
 }
 
 .place-button:hover:enabled {
+  transform: translateY(-50%);
+}
+
+.sort-tiles-button:hover:enabled {
   transform: translateY(-50%);
 }
 
@@ -1528,6 +1573,19 @@ button:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+.bank-stock-stack {
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.bank-stock-size {
+  margin-top: 0.08vw;
+  color: var(--muted);
+  font-size: 0.5vw;
+  font-weight: 700;
+}
+
 .stock-count.is-present {
   border-radius: 0;
 }
@@ -1575,6 +1633,27 @@ button:disabled {
 
   50% {
     opacity: 0.35;
+  }
+}
+
+@keyframes action-prompt-rainbow {
+  from {
+    background-position: 0% 50%;
+  }
+
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes action-prompt-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.18;
   }
 }
 
@@ -1674,6 +1753,7 @@ button:disabled {
     --rack-title-gap: 0.65vw;
     --rack-action-width: 96px;
     --rack-action-gap: 12px;
+    --rack-sort-width: 52px;
     --finish-button-width: min(60vw, 220px);
     --board-tile-size: calc((var(--board-shell-width) - (2 * var(--board-shell-pad)) - (11 * var(--board-gap)) - 2px) / 12);
   }
@@ -1682,6 +1762,16 @@ button:disabled {
     display: grid;
     grid-template-columns: 1fr;
     justify-items: center;
+  }
+
+  .game-hero {
+    gap: 8px;
+  }
+
+  .action-prompt {
+    min-width: 0;
+    font-size: clamp(0.78rem, 3.2vw, 1.1rem);
+    -webkit-text-stroke: 0.3px rgba(31, 42, 47, 0.35);
   }
 
   .game-leftbar,

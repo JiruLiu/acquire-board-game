@@ -22,9 +22,12 @@ const socket = io();
 
 const elements = {
   status: document.getElementById("status"),
+  actionPromptLeft: document.getElementById("action-prompt-left"),
+  actionPromptRight: document.getElementById("action-prompt-right"),
   tileRack: document.getElementById("tile-rack"),
   board: document.getElementById("board"),
   placeButton: document.getElementById("place-button"),
+  sortTilesButton: document.getElementById("sort-tiles-button"),
   finishButton: document.getElementById("finish-button"),
   holdingsBody: document.getElementById("holdings-body"),
   copyLinkButton: document.getElementById("copy-link-button"),
@@ -34,7 +37,6 @@ const elements = {
   buyingTotal: document.getElementById("buying-total"),
   buyingTotalValue: document.getElementById("buying-total-value"),
   buyingNote: document.getElementById("buying-note"),
-  buyButton: document.getElementById("buy-button"),
   tradePanel: document.getElementById("trade-panel"),
   tradePlayer: document.getElementById("trade-player"),
   tradeNote: document.getElementById("trade-note"),
@@ -356,8 +358,17 @@ function canFinishTurn() {
 function renderRack() {
   const viewer = state.roomState?.players?.find((player) => player.id === state.playerId);
   const tiles = viewer?.tiles?.length ? viewer.tiles : Array(6).fill(null);
+  const sharePrices = state.roomState?.share_prices || {};
+  const boughtThisTurn = state.roomState?.stocks_bought_this_turn || 0;
+  const selectedCount = selectedBuyCount();
+  const selectedTotal = STOCK_COLORS.reduce((total, color) => (
+    total + ((state.buySelection[color] || 0) * (sharePrices[color] || 0))
+  ), 0);
+  const canBuyAndFinish = boughtThisTurn + selectedCount <= 3
+    && selectedTotal <= (viewer?.money || 0);
   elements.tileRack.innerHTML = "";
-  elements.finishButton.disabled = !canFinishTurn();
+  elements.sortTilesButton.disabled = !viewer?.tiles?.some(Boolean);
+  elements.finishButton.disabled = !canFinishTurn() || !canBuyAndFinish;
 
   if (state.selectedTile && !tiles.includes(state.selectedTile)) {
     state.selectedTile = null;
@@ -390,7 +401,7 @@ function renderRack() {
   }
 
   elements.placeButton.disabled = !state.selectedTile || !canPlaceTile(state.selectedTile);
-  elements.finishButton.disabled = !canFinishTurn();
+  elements.finishButton.disabled = !canFinishTurn() || !canBuyAndFinish;
 }
 
 function renderBoard() {
@@ -522,6 +533,16 @@ function displayTile(tile) {
   return `${tile.slice(1)}${tile[0]}`;
 }
 
+function tileRackSortKey(tile) {
+  return [Number(tile.slice(1)), ROWS.indexOf(tile[0])];
+}
+
+function compareTilesByRackOrder(left, right) {
+  const leftKey = tileRackSortKey(left);
+  const rightKey = tileRackSortKey(right);
+  return leftKey[0] - rightKey[0] || leftKey[1] - rightKey[1];
+}
+
 function displayPlayerName(name) {
   if (!name) return "";
   return String(name).slice(0, 8);
@@ -534,9 +555,23 @@ function stockCell(stocks, color) {
   `;
 }
 
+function bankStockCell(stocks, companySizes, color) {
+  const count = stocks?.[color] || 0;
+  const size = companySizes?.[color] || 0;
+  return `
+    <td class="stock-count stock-${color}${count ? " is-present" : ""}">
+      <span class="bank-stock-stack">
+        <span>${count ? String(count) : ""}</span>
+        <span class="bank-stock-size">${size ? String(size) : ""}</span>
+      </span>
+    </td>
+  `;
+}
+
 function renderHoldings() {
   const players = state.roomState?.players || [];
   const bankStocks = state.roomState?.bank?.stocks || {};
+  const companySizes = state.roomState?.company_sizes || {};
   elements.holdingsBody.innerHTML = "";
 
   for (let index = 0; index < MAX_PLAYERS; index += 1) {
@@ -561,7 +596,7 @@ function renderHoldings() {
   const bankRow = document.createElement("tr");
   bankRow.className = "bank-row";
   const bankStockCells = STOCK_COLORS
-    .map((color) => stockCell(bankStocks, color))
+    .map((color) => bankStockCell(bankStocks, companySizes, color))
     .join("");
   bankRow.innerHTML = `
     <td>Bank</td>
@@ -634,8 +669,7 @@ function renderBuying() {
 
   elements.buyingCount.textContent = `${boughtThisTurn + selectedCount} / 3`;
   elements.buyingTotalValue.textContent = formatMoney(selectedTotal);
-  elements.buyButton.disabled = !isBuyingTurn
-    || selectedCount <= 0
+  elements.finishButton.disabled = !canFinishTurn()
     || boughtThisTurn + selectedCount > 3
     || selectedTotal > (viewer?.money || 0);
 }
@@ -835,6 +869,10 @@ function renderAcquireOrder() {
 
 function renderActionPanels() {
   const pending = state.roomState?.pending_acquire;
+  const isTurnActive = state.roomState?.current_turn_player_id === state.playerId
+    && !state.roomState?.pending_found_player_id
+    && !state.roomState?.pending_acquire
+    && !state.roomState?.game_over;
   const isFoundActive = state.roomState?.pending_found_player_id === state.playerId
     && !state.roomState?.game_over;
   const isAcquireOrderActive = (!!pending?.ordering || !!pending?.choosing_survivor)
@@ -848,11 +886,14 @@ function renderActionPanels() {
     && !pending?.ordering
     && !pending?.choosing_survivor
     && !state.roomState?.game_over;
+  const shouldPromptAction = isTurnActive || isFoundActive || isAcquireOrderActive || isTradeActive;
 
   setPanelFocus(elements.foundPanel, isFoundActive, "found");
   setPanelFocus(elements.acquireOrderPanel, isAcquireOrderActive, "acquire");
   setPanelFocus(elements.buyingPanel, isBuyingActive, "buying");
   setPanelFocus(elements.tradePanel, isTradeActive, "trade");
+  elements.actionPromptLeft.hidden = !shouldPromptAction;
+  elements.actionPromptRight.hidden = !shouldPromptAction;
 
   elements.foundNote.textContent = isFoundActive
     ? "Choose a company, then click Found."
@@ -1050,32 +1091,38 @@ async function handleFoundButton() {
 
 async function handleFinishButton() {
   if (!canFinishTurn()) return;
+  const purchases = Object.fromEntries(
+    Object.entries(state.buySelection).filter(([, quantity]) => quantity > 0)
+  );
 
   try {
     const data = await api(`/api/rooms/${state.roomId}/finish_turn`, {
       method: "POST",
-      body: JSON.stringify({ player_id: state.playerId }),
+      body: JSON.stringify({ player_id: state.playerId, purchases }),
     });
     state.selectedTile = null;
     state.selectedCompany = null;
+    state.buySelection = {};
     applyRoomState(data, "Turn finished.");
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
-async function handleBuyButton() {
-  const purchases = Object.fromEntries(
-    Object.entries(state.buySelection).filter(([, quantity]) => quantity > 0)
-  );
-
+async function handleSortTilesButton() {
+  const viewer = currentViewer();
+  if (!viewer?.tiles?.some(Boolean)) return;
+  viewer.tiles = [
+    ...viewer.tiles.filter(Boolean).sort(compareTilesByRackOrder),
+    ...viewer.tiles.filter((tile) => !tile),
+  ];
+  renderRack();
   try {
-    const data = await api(`/api/rooms/${state.roomId}/buy_stocks`, {
+    const data = await api(`/api/rooms/${state.roomId}/sort_tiles`, {
       method: "POST",
-      body: JSON.stringify({ player_id: state.playerId, purchases }),
+      body: JSON.stringify({ player_id: state.playerId }),
     });
-    state.buySelection = {};
-    applyRoomState(data, "Stocks bought.");
+    applyRoomState(data, "Tiles sorted.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1221,7 +1268,7 @@ subscribeToRoomState();
 elements.placeButton.addEventListener("click", handlePlaceButton);
 elements.foundButton.addEventListener("click", handleFoundButton);
 elements.finishButton.addEventListener("click", handleFinishButton);
-elements.buyButton.addEventListener("click", handleBuyButton);
+elements.sortTilesButton.addEventListener("click", handleSortTilesButton);
 elements.processTradeButton.addEventListener("click", handleProcessTradeButton);
 elements.acquireOrderButton.addEventListener("click", handleAcquireOrderButton);
 elements.endingCloseButton.addEventListener("click", closeEndingPanel);
