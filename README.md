@@ -82,8 +82,8 @@ Use these settings:
 
 - Language: `Python 3`
 - Build Command: `pip install -r requirements.txt`
-- Start Command: `gunicorn -w 1 --threads 100 app:app`
-- Health Check Path: `/`
+- Start Command: `gunicorn -w 1 --threads 100 --timeout 0 --keep-alive 75 app:app`
+- Health Check Path: `/health`
 - Instances: `1`
 
 After deployment, Render will give you an `onrender.com` URL. Share that URL with your friend.

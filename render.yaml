@@ -3,7 +3,7 @@ services:
     name: acquire-board-game
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 --threads 100 app:app
+    startCommand: gunicorn -w 1 --threads 100 --timeout 0 --keep-alive 75 app:app
     healthCheckPath: /health
     numInstances: 1
     autoDeployTrigger: commit
