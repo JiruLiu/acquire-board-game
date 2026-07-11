@@ -4,6 +4,6 @@ services:
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 1 --threads 100 app:app
-    healthCheckPath: /
+    healthCheckPath: /health
     numInstances: 1
     autoDeployTrigger: commit

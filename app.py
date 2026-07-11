@@ -777,6 +777,11 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
 @app.get("/game/<room_id>")
 def game_page(room_id: str):
     player_id = request.args.get("player_id", "")
