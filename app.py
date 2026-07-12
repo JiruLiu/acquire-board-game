@@ -136,12 +136,19 @@ def detach_socket(sid: str) -> None:
 
 
 def broadcast_room_state(room: Room) -> None:
-    for player in room.players:
-        socketio.emit(
-            "room_state",
+    payloads = [
+        (
+            player_socket_room(room.id, player.id),
             build_public_room_state(room, player.id),
-            to=player_socket_room(room.id, player.id),
         )
+        for player in room.players
+    ]
+
+    def emit_payloads() -> None:
+        for socket_room, state in payloads:
+            socketio.emit("room_state", state, to=socket_room)
+
+    socketio.start_background_task(emit_payloads)
 
 
 def build_public_room_state(room: Room, viewer_id: str | None) -> dict:

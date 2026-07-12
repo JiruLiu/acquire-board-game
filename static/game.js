@@ -519,7 +519,11 @@ function playRoomEventSounds(previousState, nextState) {
 function applyRoomState(nextState, fallbackMessage = "Connected.") {
   const previousState = state.roomState;
   state.roomState = nextState;
-  playRoomEventSounds(previousState, nextState);
+  try {
+    playRoomEventSounds(previousState, nextState);
+  } catch (error) {
+    console.warn("Sound effect failed.", error);
+  }
   setStatus(nextState.last_action || fallbackMessage);
   renderGame();
 }
