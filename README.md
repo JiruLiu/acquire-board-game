@@ -1,7 +1,7 @@
 # Acquire Board Game
 
-![alt text](image-1.png)
-![alt text](image.png)
+![alt text](image_login.png)
+![alt text](image_game.png)
 
 
 This repository is a private, browser-based multiplayer board game inspired by hotel-merger gameplay. It is intentionally small:
@@ -14,12 +14,14 @@ This repository is a private, browser-based multiplayer board game inspired by h
 
 Current features include:
 
-- use a lobby page to create or join a room
+- use a lobby page to create, join, or spectate a password-protected room
+- list active rooms and the players waiting in each room
 - validate player names as 1-10 letters or numbers
 - prevent duplicate player names within a room
 - allow only 2-5 players in a room
 - allow only the room creator to start the game
-- move to a separate board page after start
+- move players and waiting spectators to the board page after start
+- show all player tiles in a read-only spectator interface
 - place tiles on a 9x12 shared board
 - push room updates instantly with WebSockets
 - found companies and expand company groups
@@ -47,7 +49,25 @@ Then open:
 http://127.0.0.1:5000
 ```
 
-Open that URL in two browser windows, create a room in one (**invitation code : evanston**), and join it from the other.
+### Create a room
+
+Enter all three fields on the left side of the lobby:
+
+1. Your player name (1-10 letters or numbers)
+2. Invitation code: `evanston`
+3. A room password of your choice
+
+Click **Create Room**. The new room appears under **Existing Rooms**. The creator cannot Join or Spectate their own room; after 2-5 players have joined, the creator clicks **Start Game**.
+
+### Join a room
+
+Joining does not require the invitation code. Enter your name at the left, enter the room password inside the desired room card, and click **Join**. You will wait in the lobby until the creator starts the game.
+
+### Spectate a room
+
+Spectating also requires only your name and the room password. Click **Spectate** on the desired room. You will wait in the lobby and automatically move to the read-only game interface when the creator starts.
+
+The room disappears from **Existing Rooms** when no players are connected. Spectators do not keep a room alive.
 
 ## 2. What the files do
 
