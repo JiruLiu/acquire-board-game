@@ -1,7 +1,7 @@
 # Acquire Board Game
 
-![alt text](image_login.png)
-![alt text](image_game.png)
+![Acquire room lobby](image_login.png)
+![Acquire game board](image_game.png)
 
 
 This repository is a private, browser-based multiplayer board game inspired by hotel-merger gameplay. It is intentionally small:
