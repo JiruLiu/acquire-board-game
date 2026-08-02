@@ -16,6 +16,13 @@
 
       <section class="game-layout">
         <aside class="game-sidebar">
+          <section id="spectator-tiles-panel" class="panel spectator-tiles-panel" hidden>
+            <div class="spectator-tiles-header">
+              <h3>Players' Tiles</h3>
+              <button id="spectator-sort-tiles" class="spectator-sort-tiles" type="button">Sort</button>
+            </div>
+            <div id="spectator-tiles" class="spectator-tiles"></div>
+          </section>
           <section id="found-panel" class="panel found-panel">
             <div class="found-company-header">
               <h3>Found a Company</h3>
@@ -137,7 +144,7 @@
             </div>
           </section>
 
-          <section class="panel rack-panel">
+          <section id="rack-panel" class="panel rack-panel">
             <div class="rack-block">
               <div class="rack-body">
                 <button id="sort-tiles-button" class="sort-tiles-button" type="button">Sort</button>

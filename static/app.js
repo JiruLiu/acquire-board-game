@@ -12,13 +12,11 @@ const socket = io();
 const elements = {
   playerName: document.getElementById("player-name"),
   inviteCode: document.getElementById("invite-code"),
-  roomCode: document.getElementById("room-code"),
+  roomPassword: document.getElementById("room-password"),
   status: document.getElementById("status"),
-  roomId: document.getElementById("room-id"),
-  players: document.getElementById("players"),
   createRoom: document.getElementById("create-room"),
-  joinRoom: document.getElementById("join-room"),
-  startGame: document.getElementById("start-game"),
+  availableRooms: document.getElementById("available-rooms"),
+  refreshRooms: document.getElementById("refresh-rooms"),
 };
 
 function setStatus(message, isError = false) {
@@ -52,28 +50,40 @@ async function api(path, options = {}) {
   return data;
 }
 
-function renderPlayers() {
-  const players = state.roomState?.players || [];
-  elements.players.innerHTML = "";
-
-  for (const player of players) {
-    const item = document.createElement("li");
-    const isViewer = player.id === state.playerId;
-    const isCreator = players[0]?.id === player.id;
-    item.textContent = player.name;
-    if (isViewer) item.textContent += " | You";
-    if (isCreator) item.textContent += " | Creator";
-    elements.players.appendChild(item);
+async function loadRooms() {
+  try {
+    const data = await api("/api/rooms");
+    elements.availableRooms.innerHTML = "";
+    if (!data.rooms.length) {
+      elements.availableRooms.innerHTML = '<p class="panel-note">No rooms yet. Create the first one.</p>';
+      return;
+    }
+    for (const room of data.rooms) {
+      const card = document.createElement("article");
+      card.className = "available-room-card";
+      const isCreator = room.room_id === state.roomId && room.creator_id === state.playerId;
+      card.innerHTML = `
+        <div class="available-room-summary">
+          <strong>${room.name}</strong>
+          <span class="room-player-names">${room.players.join(", ") || "No players"}</span>
+          <span>${room.started ? "Game in progress" : "Waiting to start"}</span>
+        </div>
+        <input class="room-card-password" type="password" placeholder="Room password" maxlength="24" aria-label="Password for ${room.name}">
+        <div class="available-room-actions">
+          <button type="button" data-action="join" ${isCreator || room.started || room.player_count >= room.max_players ? "disabled" : ""}>Join</button>
+          <button type="button" data-action="spectate" ${isCreator ? "disabled" : ""}>Spectate</button>
+          <button type="button" data-action="start" ${isCreator && !room.started ? "" : "disabled"}>Start Game</button>
+        </div>`;
+      const passwordInput = card.querySelector(".room-card-password");
+      if (room.room_id === state.roomId) passwordInput.value = elements.roomPassword.value;
+      card.querySelector('[data-action="join"]').addEventListener("click", () => enterRoom(room.room_id, false, passwordInput.value));
+      card.querySelector('[data-action="spectate"]').addEventListener("click", () => enterRoom(room.room_id, true, passwordInput.value));
+      card.querySelector('[data-action="start"]').addEventListener("click", () => startGame(room.room_id));
+      elements.availableRooms.appendChild(card);
+    }
+  } catch (error) {
+    setStatus(error.message, true);
   }
-}
-
-function renderRoom() {
-  elements.roomId.textContent = state.roomId || "Not connected";
-  renderPlayers();
-
-  const players = state.roomState?.players || [];
-  const isCreator = players[0]?.id === state.playerId;
-  elements.startGame.disabled = !state.roomId || !isCreator || !!state.roomState?.started;
 }
 
 function redirectToGameIfStarted() {
@@ -95,60 +105,66 @@ function subscribeToRoomState() {
 async function createRoom() {
   const playerName = getPlayerName();
   const invitationCode = getInviteCode();
+  const roomPassword = elements.roomPassword.value.trim();
 
   try {
     validateNameOrThrow(playerName);
     if (!invitationCode) {
       throw new Error("Enter the invitation code to create a room.");
     }
+    if (!roomPassword) throw new Error("Enter a room password to create a room.");
     const data = await api("/api/rooms", {
       method: "POST",
       body: JSON.stringify({
         player_name: playerName,
         invitation_code: invitationCode,
+        room_password: roomPassword,
       }),
     });
     state.roomId = data.room_id;
     state.playerId = data.player_id;
     state.roomState = data.state;
-    elements.roomCode.value = state.roomId;
-    setStatus(`Room ${state.roomId} created. Share this code with your friend.`);
+    elements.roomPassword.value = roomPassword;
+    setStatus(`${state.roomState.room_name} created.`);
     subscribeToRoomState();
-    renderRoom();
+    loadRooms();
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
-async function joinRoom() {
+async function enterRoom(roomCode, spectate, password) {
   const playerName = getPlayerName();
-  const roomCode = elements.roomCode.value.trim().toUpperCase();
+  const roomPassword = password.trim();
 
   try {
     validateNameOrThrow(playerName);
-    if (!roomCode) {
-      throw new Error("Enter a room code.");
-    }
-    const data = await api(`/api/rooms/${roomCode}/join`, {
+    if (!roomPassword) throw new Error("Enter the room password first.");
+    const data = await api(`/api/rooms/${roomCode}/${spectate ? "spectate" : "join"}`, {
       method: "POST",
-      body: JSON.stringify({ player_name: playerName }),
+      body: JSON.stringify({ player_name: playerName, room_password: roomPassword }),
     });
     state.roomId = data.room_id;
     state.playerId = data.player_id;
     state.roomState = data.state;
-    setStatus(`Joined room ${state.roomId}.`);
+    elements.roomPassword.value = roomPassword;
+    setStatus(
+      spectate
+        ? `Waiting to spectate ${state.roomState.room_name}. The creator has not started the game.`
+        : `Joined ${state.roomState.room_name}. Waiting for the creator to start.`,
+    );
     subscribeToRoomState();
-    renderRoom();
+    loadRooms();
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
-async function startGame() {
-  if (!state.roomId || !state.playerId) return;
+async function startGame(roomId) {
+  if (!roomId || roomId !== state.roomId || !state.playerId) return;
 
   try {
-    await api(`/api/rooms/${state.roomId}/start`, {
+    await api(`/api/rooms/${roomId}/start`, {
       method: "POST",
       body: JSON.stringify({ player_id: state.playerId }),
     });
@@ -162,10 +178,10 @@ async function startGame() {
 socket.on("room_state", (data) => {
   state.roomState = data;
   state.roomId = data.room_id;
-  renderRoom();
+  loadRooms();
   redirectToGameIfStarted();
 });
 
 elements.createRoom.addEventListener("click", createRoom);
-elements.joinRoom.addEventListener("click", joinRoom);
-elements.startGame.addEventListener("click", startGame);
+elements.refreshRooms.addEventListener("click", loadRooms);
+loadRooms();

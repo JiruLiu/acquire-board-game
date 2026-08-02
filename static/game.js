@@ -16,6 +16,8 @@ const state = {
   statusHistory: [],
   copyLinkResetTimer: null,
   endingClosed: false,
+  spectatorTilesSorted: false,
+  spectatorCheckedTile: null,
 };
 
 const socket = io();
@@ -66,6 +68,9 @@ const elements = {
   endingRankings: document.getElementById("ending-rankings"),
   endingCloseButton: document.getElementById("ending-close-button"),
   showEndingButton: document.getElementById("show-ending-button"),
+  spectatorTilesPanel: document.getElementById("spectator-tiles-panel"),
+  spectatorTiles: document.getElementById("spectator-tiles"),
+  spectatorSortTiles: document.getElementById("spectator-sort-tiles"),
 };
 
 let audioContext = null;
@@ -356,6 +361,11 @@ function canFinishTurn() {
 }
 
 function renderRack() {
+  if (state.roomState?.is_spectator) {
+    renderSpectatorCheckRack();
+    return;
+  }
+
   const viewer = state.roomState?.players?.find((player) => player.id === state.playerId);
   const tiles = viewer?.tiles?.length ? viewer.tiles : Array(6).fill(null);
   const sharePrices = state.roomState?.share_prices || {};
@@ -404,10 +414,54 @@ function renderRack() {
   elements.finishButton.disabled = !canFinishTurn() || !canBuyAndFinish;
 }
 
+function renderSpectatorCheckRack() {
+  let owner = null;
+  let checkedIndex = -1;
+
+  for (const player of state.roomState?.players || []) {
+    const playerTiles = (player.tiles || []).slice();
+    if (state.spectatorTilesSorted) {
+      playerTiles.sort((left, right) => {
+        if (!left) return 1;
+        if (!right) return -1;
+        return compareTilesByRackOrder(left, right);
+      });
+    }
+    const tileIndex = playerTiles.indexOf(state.spectatorCheckedTile);
+    if (tileIndex !== -1) {
+      owner = player;
+      checkedIndex = tileIndex;
+      break;
+    }
+  }
+
+  if (!owner) {
+    state.spectatorCheckedTile = null;
+  }
+
+  elements.tileRack.innerHTML = "";
+  for (let index = 0; index < 6; index += 1) {
+    const chip = document.createElement("div");
+    chip.className = "board-cell rack-cell empty-rack-cell spectator-check-cell";
+    if (owner && index === checkedIndex) {
+      const tile = state.spectatorCheckedTile;
+      chip.classList.remove("empty-rack-cell");
+      chip.innerHTML = `<span class="coord">${displayTile(tile)}</span>`;
+    }
+    elements.tileRack.appendChild(chip);
+  }
+
+  elements.finishButton.textContent = `Owner: ${owner?.name || ""}`;
+  elements.finishButton.disabled = true;
+}
+
 function renderBoard() {
   elements.board.innerHTML = "";
   const boardData = state.roomState?.board || {};
   const lastPlacedTile = state.roomState?.last_placed_tile;
+  const ownedTiles = new Set(
+    (state.roomState?.players || []).flatMap((player) => player.tiles || []).filter(Boolean),
+  );
 
   for (const row of ROWS) {
     for (const column of COLUMNS) {
@@ -416,6 +470,12 @@ function renderBoard() {
       const button = document.createElement("button");
       button.className = "board-cell";
       button.dataset.tile = tile;
+      if (ownedTiles.has(tile)) {
+        button.classList.add("owned-tile");
+      }
+      if (tile === state.spectatorCheckedTile) {
+        button.classList.add("checked-owned-tile");
+      }
 
       const boardEntry = boardData[tile];
       if (boardEntry) {
@@ -426,18 +486,25 @@ function renderBoard() {
           button.classList.add(`company-${company}`);
         }
         const ownerMarkup = tile === lastPlacedTile
-          ? `<span class="owner">${placedBy}</span>`
+          ? `<span class="owner">${placedBy.slice(0, 4)}</span>`
           : "";
         button.innerHTML = `<span class="coord">${tileLabel}</span>${ownerMarkup}`;
       } else {
         button.innerHTML = `<span class="coord">${tileLabel}</span>`;
-        button.disabled = !canPlaceTile(tile);
+        const canSpectatorCheck = !!state.roomState?.is_spectator && ownedTiles.has(tile);
+        button.disabled = !canPlaceTile(tile) && !canSpectatorCheck;
         if (tile === state.selectedTile) {
           button.classList.add("target-selected");
         }
       }
 
       button.addEventListener("click", () => {
+        if (state.roomState?.is_spectator && ownedTiles.has(tile)) {
+          state.spectatorCheckedTile = tile;
+          renderRack();
+          renderBoard();
+          return;
+        }
         if (!canPlaceTile(tile)) return;
         state.selectedTile = tile;
         renderRack();
@@ -954,6 +1021,14 @@ function renderEnding() {
         <span>${formatMoney(finalTotal)}</span>
       </div>
       <div class="ending-breakdown">
+        <div class="ending-detail-row ending-stat-row">
+          <span>Companies built</span>
+          <span>${player.companies_built ?? 0}</span>
+        </div>
+        <div class="ending-detail-row ending-stat-row">
+          <span>Companies acquired</span>
+          <span>${player.companies_acquired ?? 0}</span>
+        </div>
         <div class="ending-detail-row">
           <span>Cash on hand</span>
           <span>${formatMoney(cashBeforeSales)}</span>
@@ -1027,6 +1102,7 @@ function renderCompanies() {
 }
 
 function renderGame() {
+  renderSpectatorMode();
   renderEnding();
   renderHoldings();
   renderBuying();
@@ -1036,6 +1112,35 @@ function renderGame() {
   renderActionPanels();
   renderRack();
   renderBoard();
+}
+
+function renderSpectatorMode() {
+  const isSpectator = !!state.roomState?.is_spectator;
+  document.body.classList.toggle("spectator-mode", isSpectator);
+  elements.spectatorTilesPanel.hidden = !isSpectator;
+  if (!isSpectator) return;
+
+  elements.spectatorTiles.innerHTML = "";
+  for (const player of state.roomState.players || []) {
+    const row = document.createElement("div");
+    row.className = "spectator-player-tiles";
+    const tiles = (player.tiles || []).filter(Boolean);
+    if (state.spectatorTilesSorted) {
+      tiles.sort(compareTilesByRackOrder);
+    }
+    row.innerHTML = `
+      <strong>${player.name}</strong>
+      <div class="spectator-tile-list">
+        ${tiles.map((tile) => `<span class="spectator-tile">${displayTile(tile)}</span>`).join("") || '<span class="panel-note">No tiles</span>'}
+      </div>`;
+    elements.spectatorTiles.appendChild(row);
+  }
+}
+
+function handleSpectatorSortTiles() {
+  if (!state.roomState?.is_spectator) return;
+  state.spectatorTilesSorted = true;
+  renderSpectatorMode();
 }
 
 async function placeTile(tile) {
@@ -1277,3 +1382,4 @@ elements.processTradeButton.addEventListener("click", handleProcessTradeButton);
 elements.acquireOrderButton.addEventListener("click", handleAcquireOrderButton);
 elements.endingCloseButton.addEventListener("click", closeEndingPanel);
 elements.showEndingButton.addEventListener("click", showEndingPanel);
+elements.spectatorSortTiles.addEventListener("click", handleSpectatorSortTiles);

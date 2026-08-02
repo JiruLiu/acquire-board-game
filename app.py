@@ -19,6 +19,7 @@ STARTING_BANK_SHARES = 25
 SUPER_COMPANY_SIZE = 10
 GAME_END_COMPANY_SIZE = 41
 ROOM_CREATION_INVITE_CODE = "evanston"
+ROOM_PASSWORD_PATTERN = re.compile(r"^.{1,24}$")
 COMPANY_LEVELS = {
     "low": ["red", "yellow"],
     "mid": ["green", "pink", "purple"],
@@ -31,6 +32,8 @@ class Player:
     id: str
     name: str
     money: int = STARTING_CASH
+    companies_built: int = 0
+    companies_acquired: int = 0
     stocks: dict[str, int] = field(
         default_factory=lambda: {color: 0 for color in STOCK_COLORS}
     )
@@ -40,7 +43,10 @@ class Player:
 @dataclass
 class Room:
     id: str
+    name: str
+    password: str
     players: list[Player] = field(default_factory=list)
+    spectator_ids: set[str] = field(default_factory=set)
     started: bool = False
     current_turn: int = 0
     deck: list[str] = field(default_factory=list)
@@ -76,6 +82,7 @@ class Room:
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode="threading")
 rooms: dict[str, Room] = {}
+next_room_number = 1
 room_lock = threading.Lock()
 PLAYER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9]{1,10}$")
 ROOM_CLEANUP_GRACE_SECONDS = float(os.environ.get("ROOM_CLEANUP_GRACE_SECONDS", "10"))
@@ -98,14 +105,25 @@ def cancel_room_cleanup(room_id: str) -> None:
         timer.cancel()
 
 
+def room_has_connected_player(room_id: str) -> bool:
+    normalized_room_id = room_id.upper()
+    room = rooms.get(normalized_room_id)
+    if not room:
+        return False
+    player_ids = {player.id for player in room.players}
+    return any(
+        socket_membership.get(sid, (None, None))[1] in player_ids
+        for sid in room_connected_sids.get(normalized_room_id, set())
+    )
+
+
 def schedule_room_cleanup(room_id: str) -> None:
     normalized_room_id = room_id.upper()
     cancel_room_cleanup(normalized_room_id)
 
     def cleanup() -> None:
         with room_lock:
-            active_sids = room_connected_sids.get(normalized_room_id)
-            if active_sids:
+            if room_has_connected_player(normalized_room_id):
                 return
             rooms.pop(normalized_room_id, None)
             room_connected_sids.pop(normalized_room_id, None)
@@ -122,17 +140,22 @@ def detach_socket(sid: str) -> None:
     if not membership:
         return
 
-    room_id, _player_id = membership
+    room_id, member_id = membership
+    room = rooms.get(room_id)
+    was_player = bool(room and any(player.id == member_id for player in room.players))
     active_sids = room_connected_sids.get(room_id)
     if not active_sids:
+        if was_player or room_id not in room_cleanup_timers:
+            schedule_room_cleanup(room_id)
         return
 
     active_sids.discard(sid)
-    if active_sids:
+    if room_has_connected_player(room_id):
         return
-
-    room_connected_sids.pop(room_id, None)
-    schedule_room_cleanup(room_id)
+    if not active_sids:
+        room_connected_sids.pop(room_id, None)
+    if was_player or room_id not in room_cleanup_timers:
+        schedule_room_cleanup(room_id)
 
 
 def broadcast_room_state(room: Room) -> None:
@@ -143,6 +166,13 @@ def broadcast_room_state(room: Room) -> None:
         )
         for player in room.players
     ]
+    payloads.extend(
+        (
+            player_socket_room(room.id, spectator_id),
+            build_public_room_state(room, spectator_id),
+        )
+        for spectator_id in room.spectator_ids
+    )
 
     def emit_payloads() -> None:
         for socket_room, state in payloads:
@@ -152,8 +182,11 @@ def broadcast_room_state(room: Room) -> None:
 
 
 def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
+    is_spectator = bool(viewer_id and viewer_id in room.spectator_ids)
     return {
         "room_id": room.id,
+        "room_name": room.name,
+        "is_spectator": is_spectator,
         "started": room.started,
         "current_turn_player_id": (
             room.players[room.current_turn].id if room.started and room.players else None
@@ -171,7 +204,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
                 "money": player.money,
                 "stocks": player.stocks,
                 "tile_count": len([tile for tile in player.tiles if tile]),
-                "tiles": player.tiles if player.id == viewer_id else [],
+                "tiles": player.tiles if player.id == viewer_id or is_spectator else [],
             }
             for player in room.players
         ],
@@ -484,6 +517,8 @@ def build_final_rankings(room: Room) -> list[dict]:
                 ],
                 "stock_sale_total": stock_sale_total,
                 "stock_sales": stock_sales,
+                "companies_built": player.companies_built,
+                "companies_acquired": player.companies_acquired,
                 "final_total": final_total,
             }
         )
@@ -784,6 +819,25 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/api/rooms")
+def list_rooms():
+    with room_lock:
+        room_list = [
+            {
+                "room_id": room.id,
+                "name": room.name,
+                "player_count": len(room.players),
+                "players": [player.name for player in room.players],
+                "creator_id": room.players[0].id if room.players else None,
+                "max_players": 5,
+                "started": room.started,
+            }
+            for room in rooms.values()
+            if room_has_connected_player(room.id)
+        ]
+    return jsonify({"rooms": room_list})
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -803,11 +857,12 @@ def join_room_state(data):
         socket_join_room(player_socket_room(room_id, player_id))
         with room_lock:
             detach_socket(request.sid)
-            cancel_room_cleanup(room_id)
             socket_membership[request.sid] = (room_id, player_id)
             room_connected_sids.setdefault(room_id, set()).add(request.sid)
             room = rooms.get(room_id)
             if room:
+                if any(player.id == player_id for player in room.players):
+                    cancel_room_cleanup(room_id)
                 socketio.emit(
                     "room_state",
                     build_public_room_state(room, player_id),
@@ -823,19 +878,31 @@ def handle_disconnect():
 
 @app.post("/api/rooms")
 def create_room():
+    global next_room_number
     data = request.get_json(silent=True) or {}
     player_name = (data.get("player_name") or "").strip()
     invitation_code = (data.get("invitation_code") or "").strip().lower()
+    room_password = (data.get("room_password") or "").strip()
 
     with room_lock:
         try:
             validate_player_name(player_name)
             if invitation_code != ROOM_CREATION_INVITE_CODE:
                 raise ValueError("Invalid invitation code.")
+            if not ROOM_PASSWORD_PATTERN.fullmatch(room_password):
+                raise ValueError("Room password must be 1-24 characters.")
             room_id = new_room_id()
             player = Player(id=uuid.uuid4().hex, name=player_name)
-            room = Room(id=room_id, players=[player], last_action=f"{player_name} created the room.")
+            room = Room(
+                id=room_id,
+                name=f"Room {next_room_number}",
+                password=room_password,
+                players=[player],
+                last_action=f"{player_name} created the room.",
+            )
             rooms[room_id] = room
+            next_room_number += 1
+            schedule_room_cleanup(room_id)
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -852,11 +919,14 @@ def create_room():
 def join_room(room_id: str):
     data = request.get_json(silent=True) or {}
     player_name = (data.get("player_name") or "").strip()
+    room_password = (data.get("room_password") or "").strip()
 
     try:
         with room_lock:
             validate_player_name(player_name)
             room = get_room_or_404(room_id)
+            if room.password != room_password:
+                return jsonify({"error": "Incorrect room password."}), 403
             if room.started:
                 return jsonify({"error": "The game has already started."}), 400
             if len(room.players) >= 5:
@@ -874,6 +944,29 @@ def join_room(room_id: str):
         return jsonify({"error": str(exc)}), 400
 
     return jsonify({"room_id": room.id, "player_id": player.id, "state": state})
+
+
+@app.post("/api/rooms/<room_id>/spectate")
+def spectate_room(room_id: str):
+    data = request.get_json(silent=True) or {}
+    spectator_name = (data.get("player_name") or "").strip()
+    room_password = (data.get("room_password") or "").strip()
+
+    try:
+        with room_lock:
+            validate_player_name(spectator_name)
+            room = get_room_or_404(room_id)
+            if room.password != room_password:
+                return jsonify({"error": "Incorrect room password."}), 403
+            spectator_id = f"spectator-{uuid.uuid4().hex}"
+            room.spectator_ids.add(spectator_id)
+            state = build_public_room_state(room, spectator_id)
+    except RoomNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify(
+        {"room_id": room.id, "player_id": spectator_id, "state": state}
+    )
 
 
 @app.get("/api/rooms/<room_id>/state")
@@ -926,6 +1019,8 @@ def start_room(room_id: str):
             room.last_placed_tile = None
             for player in room.players:
                 player.tiles = []
+                player.companies_built = 0
+                player.companies_acquired = 0
                 for _ in range(6):
                     draw_tile(room, player)
             begin_buying_if_current_player_has_no_tiles(room)
@@ -1105,6 +1200,7 @@ def place_tile(room_id: str):
             connected = connected_colorless_tiles(room, tile)
             tile_label = display_tile(tile)
             if len(adjacent_company_colors) >= 2:
+                current_player.companies_acquired += len(adjacent_company_colors) - 1
                 sizes_before_acquire = company_sizes(room)
                 survivor_choices = acquire_survivor_choices(adjacent_company_colors, sizes_before_acquire)
                 survivor = None if len(survivor_choices) > 1 else survivor_choices[0]
@@ -1255,6 +1351,7 @@ def found_company(room_id: str):
                 return jsonify({"error": "That company has already been founded."}), 400
 
             if color:
+                player.companies_built += 1
                 room.companies_found[color] = True
                 for tile in room.pending_found_tiles:
                     if tile in room.board and isinstance(room.board[tile], dict):
