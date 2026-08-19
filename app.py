@@ -413,7 +413,8 @@ def shareholder_reward_allocations(room: Room, color: str) -> tuple[list[dict], 
     def pay(group: list[Player], amount: int, label: str) -> None:
         if not group or amount <= 0:
             return
-        share = amount // len(group)
+        split_unit = len(group) * 100
+        share = ((amount + split_unit - 1) // split_unit) * 100
         names = [player.name for player in group]
         for player in group:
             awards_by_player[player.id] += share
@@ -433,6 +434,12 @@ def shareholder_reward_allocations(room: Room, color: str) -> tuple[list[dict], 
         pay(groups[0], first + third, "first and third")
     elif len(groups[0]) >= 2:
         pay(groups[0], first + second, "tied first")
+        if len(groups) > 1:
+            pay(
+                groups[1],
+                third,
+                "third" if len(groups[1]) == 1 else "tied third",
+            )
     else:
         pay(groups[0], first, "first")
         if len(groups) > 1:
