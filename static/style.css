@@ -617,6 +617,37 @@ button:disabled {
   border-color: #1f2a2f;
 }
 
+.board-cell.last-placed-tile {
+  z-index: 2;
+  transform: scale(1.08);
+  border: 0.2vw solid #fff;
+  color: #111820;
+  box-shadow:
+    0 0 0 0.12vw rgba(31, 42, 47, 0.95),
+    0 0 0.72vw 0.24vw rgba(255, 255, 255, 0.92),
+    inset 0 0 0 0.08vw rgba(255, 255, 255, 0.7);
+}
+
+.board-cell.last-placed-standard {
+  background: linear-gradient(
+    135deg,
+    #d96b63 0%,
+    #e2be5b 18%,
+    #6faf7a 36%,
+    #6f9fd8 55%,
+    #9b7ac3 73%,
+    #efa3b3 88%,
+    #d9904f 100%
+  );
+  animation: none;
+}
+
+.board-cell.last-placed-acquire {
+  animation:
+    acquire-rainbow 0.9s linear infinite,
+    last-placed-blink 0.78s ease-in-out infinite;
+}
+
 @keyframes acquire-rainbow {
   0% { background: #d96b63; }
   16% { background: #e2be5b; }
@@ -625,6 +656,19 @@ button:disabled {
   64% { background: #9b7ac3; }
   80% { background: #d9904f; }
   100% { background: #6f9fd8; }
+}
+
+@keyframes last-placed-blink {
+  0%,
+  100% {
+    opacity: 1;
+    filter: brightness(1.18) saturate(1.2);
+  }
+
+  50% {
+    opacity: 0.48;
+    filter: brightness(1.5) saturate(1.45);
+  }
 }
 
 .coord {

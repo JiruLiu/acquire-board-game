@@ -135,45 +135,38 @@ function playSound(recipe) {
   recipe(context, start);
 }
 
-function playMoneyDeductSound() {
+function playCoinDropSound() {
   playSound((context, start) => {
     scheduleTone(context, {
-      type: "square",
-      frequency: 820,
-      endFrequency: 660,
+      type: "triangle",
+      frequency: 2450,
+      endFrequency: 1650,
       start,
-      duration: 0.08,
-      gain: 0.035,
-      attack: 0.004,
-      release: 0.035,
+      duration: 0.11,
+      gain: 0.045,
+      attack: 0.002,
+      release: 0.12,
     });
     scheduleTone(context, {
-      type: "square",
-      frequency: 640,
-      endFrequency: 430,
-      start: start + 0.06,
-      duration: 0.12,
-      gain: 0.04,
-      attack: 0.004,
-      release: 0.05,
+      type: "sine",
+      frequency: 3650,
+      endFrequency: 2750,
+      start: start + 0.008,
+      duration: 0.08,
+      gain: 0.026,
+      attack: 0.002,
+      release: 0.11,
     });
-  });
-}
-
-function playMoneyDealtSound() {
-  playSound((context, start) => {
-    for (let index = 0; index < 4; index += 1) {
-      scheduleTone(context, {
-        type: "triangle",
-        frequency: 520 + (index * 70),
-        endFrequency: 620 + (index * 85),
-        start: start + (index * 0.045),
-        duration: 0.08,
-        gain: 0.034,
-        attack: 0.004,
-        release: 0.04,
-      });
-    }
+    scheduleTone(context, {
+      type: "sine",
+      frequency: 980,
+      endFrequency: 720,
+      start: start + 0.025,
+      duration: 0.1,
+      gain: 0.035,
+      attack: 0.002,
+      release: 0.1,
+    });
   });
 }
 
@@ -485,6 +478,14 @@ function renderBoard() {
         if (company) {
           button.classList.add(`company-${company}`);
         }
+        if (tile === lastPlacedTile) {
+          button.classList.add("last-placed-tile");
+          button.classList.add(
+            state.roomState?.last_placed_started_acquire
+              ? "last-placed-acquire"
+              : "last-placed-standard",
+          );
+        }
         const ownerMarkup = tile === lastPlacedTile
           ? `<span class="owner">${placedBy.slice(0, 4)}</span>`
           : "";
@@ -572,7 +573,7 @@ function playRoomEventSounds(previousState, nextState) {
   }
 
   if (nextState.last_action?.includes(" bought ")) {
-    playMoneyDealtSound();
+    playCoinDropSound();
   }
 
   if (

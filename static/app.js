@@ -5,6 +5,8 @@ const state = {
   playerId: null,
   roomState: null,
   redirectedToGame: false,
+  roomEntryPending: false,
+  roomEntryLocked: false,
 };
 
 const socket = io();
@@ -30,6 +32,13 @@ function getPlayerName() {
 
 function getInviteCode() {
   return elements.inviteCode.value.trim();
+}
+
+function setRoomEntryControlsDisabled(disabled) {
+  elements.createRoom.disabled = disabled;
+  for (const control of elements.availableRooms.querySelectorAll("button, input")) {
+    control.disabled = disabled;
+  }
 }
 
 function validateNameOrThrow(name) {
@@ -62,16 +71,17 @@ async function loadRooms() {
       const card = document.createElement("article");
       card.className = "available-room-card";
       const isCreator = room.room_id === state.roomId && room.creator_id === state.playerId;
+      const roomEntryDisabled = state.roomEntryPending || state.roomEntryLocked;
       card.innerHTML = `
         <div class="available-room-summary">
           <strong>${room.name}</strong>
           <span class="room-player-names">${room.players.join(", ") || "No players"}</span>
           <span>${room.started ? "Game in progress" : "Waiting to start"}</span>
         </div>
-        <input class="room-card-password" type="password" placeholder="Room password" maxlength="24" aria-label="Password for ${room.name}">
+        <input class="room-card-password" type="password" placeholder="Room password" maxlength="24" aria-label="Password for ${room.name}" ${roomEntryDisabled ? "disabled" : ""}>
         <div class="available-room-actions">
-          <button type="button" data-action="join" ${isCreator || room.started || room.player_count >= room.max_players ? "disabled" : ""}>Join</button>
-          <button type="button" data-action="spectate" ${isCreator ? "disabled" : ""}>Spectate</button>
+          <button type="button" data-action="join" ${roomEntryDisabled || isCreator || room.started || room.player_count >= room.max_players ? "disabled" : ""}>Join</button>
+          <button type="button" data-action="spectate" ${roomEntryDisabled || isCreator ? "disabled" : ""}>Spectate</button>
           <button type="button" data-action="start" ${isCreator && !room.started ? "" : "disabled"}>Start Game</button>
         </div>`;
       const passwordInput = card.querySelector(".room-card-password");
@@ -81,6 +91,7 @@ async function loadRooms() {
       card.querySelector('[data-action="start"]').addEventListener("click", () => startGame(room.room_id));
       elements.availableRooms.appendChild(card);
     }
+    elements.createRoom.disabled = state.roomEntryPending || state.roomEntryLocked;
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -134,9 +145,12 @@ async function createRoom() {
 }
 
 async function enterRoom(roomCode, spectate, password) {
+  if (state.roomEntryPending || state.roomEntryLocked) return;
   const playerName = getPlayerName();
   const roomPassword = password.trim();
 
+  state.roomEntryPending = true;
+  setRoomEntryControlsDisabled(true);
   try {
     validateNameOrThrow(playerName);
     if (!roomPassword) throw new Error("Enter the room password first.");
@@ -147,6 +161,8 @@ async function enterRoom(roomCode, spectate, password) {
     state.roomId = data.room_id;
     state.playerId = data.player_id;
     state.roomState = data.state;
+    state.roomEntryLocked = true;
+    state.roomEntryPending = false;
     elements.roomPassword.value = roomPassword;
     setStatus(
       spectate
@@ -156,7 +172,10 @@ async function enterRoom(roomCode, spectate, password) {
     subscribeToRoomState();
     loadRooms();
   } catch (error) {
+    state.roomEntryPending = false;
+    setRoomEntryControlsDisabled(false);
     setStatus(error.message, true);
+    loadRooms();
   }
 }
 

@@ -45,6 +45,7 @@ class Room:
     id: str
     name: str
     password: str
+    creator_id: str
     players: list[Player] = field(default_factory=list)
     spectator_ids: set[str] = field(default_factory=set)
     started: bool = False
@@ -77,6 +78,7 @@ class Room:
     winner: str | None = None
     last_action: str = "Waiting for players."
     last_placed_tile: str | None = None
+    last_placed_started_acquire: bool = False
 
 
 app = Flask(__name__)
@@ -197,6 +199,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "final_rankings": room.final_rankings,
         "last_action": room.last_action,
         "last_placed_tile": room.last_placed_tile,
+        "last_placed_started_acquire": room.last_placed_started_acquire,
         "players": [
             {
                 "id": player.id,
@@ -828,7 +831,7 @@ def list_rooms():
                 "name": room.name,
                 "player_count": len(room.players),
                 "players": [player.name for player in room.players],
-                "creator_id": room.players[0].id if room.players else None,
+                "creator_id": room.creator_id,
                 "max_players": 5,
                 "started": room.started,
             }
@@ -897,6 +900,7 @@ def create_room():
                 id=room_id,
                 name=f"Room {next_room_number}",
                 password=room_password,
+                creator_id=player.id,
                 players=[player],
                 last_action=f"{player_name} created the room.",
             )
@@ -992,13 +996,18 @@ def start_room(room_id: str):
             room = get_room_or_404(room_id)
             if room.started:
                 return jsonify({"error": "The game is already running."}), 400
-            if room.players[0].id != player_id:
+            if room.creator_id != player_id:
                 return jsonify({"error": "Only the room creator can start the game."}), 403
             if len(room.players) < 2 or len(room.players) > 5:
                 return jsonify({"error": "A game must have 2-5 players."}), 400
             lowered_names = [player.name.lower() for player in room.players]
             if len(lowered_names) != len(set(lowered_names)):
                 return jsonify({"error": "Duplicate player names are not allowed."}), 400
+
+            join_order = [player.id for player in room.players]
+            random.shuffle(room.players)
+            if [player.id for player in room.players] == join_order:
+                room.players.append(room.players.pop(0))
 
             room.started = True
             room.deck = ALL_TILES[:]
@@ -1017,6 +1026,7 @@ def start_room(room_id: str):
             room.current_turn = 0
             room.winner = None
             room.last_placed_tile = None
+            room.last_placed_started_acquire = False
             for player in room.players:
                 player.tiles = []
                 player.companies_built = 0
@@ -1024,7 +1034,11 @@ def start_room(room_id: str):
                 for _ in range(6):
                     draw_tile(room, player)
             begin_buying_if_current_player_has_no_tiles(room)
-            room.last_action = f"The game started. {room.players[0].name} goes first."
+            first_player = room.players[0]
+            room.last_action = (
+                f"The game started. {first_player.name} starts their turn with "
+                f"${first_player.money:,}."
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1197,6 +1211,7 @@ def place_tile(room_id: str):
             room.last_placed_tile = tile
 
             adjacent_company_colors = adjacent_companies(room, tile)
+            room.last_placed_started_acquire = len(adjacent_company_colors) >= 2
             connected = connected_colorless_tiles(room, tile)
             tile_label = display_tile(tile)
             if len(adjacent_company_colors) >= 2:
@@ -1621,6 +1636,12 @@ def finish_turn(room_id: str):
                     room.last_action = (
                         f"{player.name} bought {bought_text} stock"
                         f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
+                        f"{player.name} finished their turn with ${player.money:,}. "
+                        f"Game over. {room.winner} wins."
+                    )
+                else:
+                    room.last_action = (
+                        f"{player.name} finished their turn with ${player.money:,}. "
                         f"Game over. {room.winner} wins."
                     )
                 state = build_public_room_state(room, player_id)
@@ -1632,16 +1653,21 @@ def finish_turn(room_id: str):
             room.pending_finish_player_id = None
             room.stocks_bought_this_turn = 0
             next_name = advance_turn(room)
+            next_player = room.players[room.current_turn]
             no_tile_buying = begin_buying_if_current_player_has_no_tiles(room)
             if tiles_drawn:
                 room.last_action = (
-                    f"{player.name} finished and drew {tiles_drawn} tile"
-                    f"{'' if tiles_drawn == 1 else 's'}. {next_name}'s turn."
+                    f"{player.name} finished their turn with ${player.money:,} and drew "
+                    f"{tiles_drawn} tile{'' if tiles_drawn == 1 else 's'}. "
+                    f"{next_name} starts their turn with ${next_player.money:,}."
                 )
                 if no_tile_buying:
                     room.last_action += f" {next_name} has no tiles and may buy stocks."
             else:
-                room.last_action = f"{player.name} finished. {next_name}'s turn."
+                room.last_action = (
+                    f"{player.name} finished their turn with ${player.money:,}. "
+                    f"{next_name} starts their turn with ${next_player.money:,}."
+                )
                 if no_tile_buying:
                     room.last_action += f" {next_name} has no tiles and may buy stocks."
             if clean_purchases:
