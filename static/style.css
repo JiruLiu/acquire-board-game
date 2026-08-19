@@ -619,7 +619,6 @@ button:disabled {
 
 .board-cell.last-placed-tile {
   z-index: 2;
-  transform: scale(1.08);
   border-color: transparent;
   color: #111820;
   box-shadow: none;
@@ -640,6 +639,7 @@ button:disabled {
 }
 
 .board-cell.last-placed-acquire {
+  transform: scale(1.08);
   animation:
     acquire-rainbow 0.9s linear infinite,
     last-placed-blink 0.78s ease-in-out infinite;
