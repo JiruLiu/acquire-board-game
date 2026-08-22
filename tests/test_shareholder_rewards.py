@@ -50,13 +50,23 @@ class ShareholderRewardAllocationTests(unittest.TestCase):
         self.assertEqual(awards, {"p0": 2600, "p1": 2600, "p2": 1500})
         self.assertEqual([detail["rank"] for detail in details], ["tied first", "third"])
 
-    def test_three_way_primary_tie_rounds_up_and_next_group_gets_tertiary(self):
-        _details, awards = self.allocations_for([5, 5, 5, 1])
+    def test_three_way_primary_tie_shares_all_rewards_and_ends_distribution(self):
+        details, awards = self.allocations_for([5, 5, 5, 1])
 
         self.assertEqual(
             awards,
-            {"p0": 1800, "p1": 1800, "p2": 1800, "p3": 1500},
+            {"p0": 2300, "p1": 2300, "p2": 2300},
         )
+        self.assertEqual([detail["rank"] for detail in details], ["tied first"])
+
+    def test_two_way_primary_tie_then_next_group_shares_tertiary(self):
+        details, awards = self.allocations_for([5, 5, 4, 4])
+
+        self.assertEqual(
+            awards,
+            {"p0": 2600, "p1": 2600, "p2": 800, "p3": 800},
+        )
+        self.assertEqual([detail["rank"] for detail in details], ["tied first", "tied third"])
 
     def test_tied_secondary_combines_secondary_and_tertiary_and_rounds_up(self):
         details, awards = self.allocations_for([5, 4, 4, 1])
@@ -74,6 +84,15 @@ class ShareholderRewardAllocationTests(unittest.TestCase):
         self.assertEqual(
             [detail["rank"] for detail in details],
             ["first", "second", "tied third"],
+        )
+
+    def test_zero_stock_holders_are_excluded_from_rank_groups(self):
+        details, awards = self.allocations_for([5, 0, 4, 0, 3])
+
+        self.assertEqual(awards, {"p0": 3000, "p2": 2200, "p4": 1500})
+        self.assertEqual(
+            [detail["player_ids"] for detail in details],
+            [["p0"], ["p2"], ["p4"]],
         )
 
 

@@ -430,9 +430,13 @@ def shareholder_reward_allocations(room: Room, color: str) -> tuple[list[dict], 
             }
         )
 
+    first_group_size = len(groups[0])
+
     if len(shareholders) == 1:
         pay(groups[0], first + third, "first and third")
-    elif len(groups[0]) >= 2:
+    elif first_group_size >= 3:
+        pay(groups[0], first + second + third, "tied first")
+    elif first_group_size == 2:
         pay(groups[0], first + second, "tied first")
         if len(groups) > 1:
             pay(
