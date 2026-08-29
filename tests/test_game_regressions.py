@@ -1,5 +1,8 @@
 import unittest
+import tempfile
+from pathlib import Path
 
+import app as app_module
 from app import (
     ALL_TILES,
     Player,
@@ -13,13 +16,20 @@ from app import (
     room_cleanup_timers,
     room_tiles,
     rooms,
+    serialize_room,
     socket_membership,
     socketio,
 )
+from recording_store import RecordingStore, snapshot_hash
 
 
 class GameRegressionTests(unittest.TestCase):
     def setUp(self):
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.original_recording_store = app_module.recording_store
+        app_module.recording_store = RecordingStore(
+            str(Path(self.temp_directory.name) / "recordings.sqlite3")
+        )
         for timer in room_cleanup_timers.values():
             timer.cancel()
         room_cleanup_timers.clear()
@@ -35,6 +45,8 @@ class GameRegressionTests(unittest.TestCase):
         room_connected_sids.clear()
         socket_membership.clear()
         rooms.clear()
+        app_module.recording_store = self.original_recording_store
+        self.temp_directory.cleanup()
 
     def make_room(self, room_id="TEST", mode="classic"):
         player = Player(id="player-1", name="Player1", tiles=["I12"])
@@ -118,6 +130,8 @@ class GameRegressionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["state"]["game_mode"], "expanded")
+        self.assertGreaterEqual(response.get_json()["state"]["seed"], 0)
+        self.assertLessEqual(response.get_json()["state"]["seed"], 0xFFFFFFFF)
 
         invalid_response = self.client.post(
             "/api/rooms",
@@ -130,6 +144,129 @@ class GameRegressionTests(unittest.TestCase):
         )
         self.assertEqual(invalid_response.status_code, 400)
         self.assertIn("Unknown game mode", invalid_response.get_json()["error"])
+
+    def test_seed_validation_rejects_invalid_values(self):
+        for seed in (-1, 4294967296, "1.5", "abc", True):
+            with self.subTest(seed=seed):
+                response = self.client.post(
+                    "/api/rooms",
+                    json={
+                        "player_name": "Creator",
+                        "invitation_code": "evanston",
+                        "room_password": "pw",
+                        "game_mode": "classic",
+                        "seed": seed,
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Seed must be", response.get_json()["error"])
+
+    def test_same_seed_reproduces_player_order_racks_and_deck(self):
+        def add_room(room_id, seed):
+            players = [
+                Player(id=f"p{index}", name=f"Player{index}")
+                for index in range(1, 5)
+            ]
+            room = Room(
+                id=room_id,
+                name=room_id,
+                password="pw",
+                creator_id=players[0].id,
+                mode="expanded",
+                seed=seed,
+                players=players,
+            )
+            rooms[room_id] = room
+            return room
+
+        first = add_room("SEEDONE", 8675309)
+        second = add_room("SEEDTWO", 8675309)
+
+        first_response = self.client.post(
+            "/api/rooms/SEEDONE/start", json={"player_id": "p1"}
+        )
+        second_response = self.client.post(
+            "/api/rooms/SEEDTWO/start", json={"player_id": "p1"}
+        )
+
+        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual([player.name for player in first.players], [player.name for player in second.players])
+        self.assertEqual(
+            {player.name: player.tiles for player in first.players},
+            {player.name: player.tiles for player in second.players},
+        )
+        self.assertEqual(first.deck, second.deck)
+
+    def test_different_seeds_change_initial_distribution(self):
+        players_one = [Player(id=f"a{index}", name=f"Player{index}") for index in range(1, 5)]
+        players_two = [Player(id=f"b{index}", name=f"Player{index}") for index in range(1, 5)]
+        first = Room(
+            id="DIFFONE",
+            name="First",
+            password="pw",
+            creator_id="a1",
+            seed=1,
+            players=players_one,
+        )
+        second = Room(
+            id="DIFFTWO",
+            name="Second",
+            password="pw",
+            creator_id="b1",
+            seed=2,
+            players=players_two,
+        )
+        rooms[first.id] = first
+        rooms[second.id] = second
+
+        self.client.post("/api/rooms/DIFFONE/start", json={"player_id": "a1"})
+        self.client.post("/api/rooms/DIFFTWO/start", json={"player_id": "b1"})
+
+        first_distribution = {player.name: player.tiles for player in first.players}
+        second_distribution = {player.name: player.tiles for player in second.players}
+        self.assertNotEqual(first_distribution, second_distribution)
+
+    def test_successful_game_actions_append_full_recording_snapshots(self):
+        players = [
+            Player(id="recorder", name="Recorder"),
+            Player(id="opponent", name="Opponent"),
+        ]
+        room = Room(
+            id="RECORD",
+            name="Recorded room",
+            password="pw",
+            creator_id=players[0].id,
+            seed=20260829,
+            players=players,
+        )
+        rooms[room.id] = room
+
+        start_response = self.client.post(
+            "/api/rooms/RECORD/start",
+            json={"player_id": "recorder"},
+        )
+        self.assertEqual(start_response.status_code, 200)
+        current_player = room.players[room.current_turn]
+        sort_response = self.client.post(
+            "/api/rooms/RECORD/sort_tiles",
+            json={"player_id": current_player.id},
+        )
+        tile = next(tile for tile in current_player.tiles if tile)
+        place_response = self.client.post(
+            "/api/rooms/RECORD/place_tile",
+            json={"player_id": current_player.id, "tile": tile},
+        )
+
+        self.assertEqual(sort_response.status_code, 200)
+        self.assertEqual(place_response.status_code, 200)
+        recording = app_module.recording_store.get_game(room.recording_id)
+        self.assertEqual(
+            [snapshot["event_type"] for snapshot in recording["snapshots"]],
+            ["start_game", "sort_tiles", "place_tile"],
+        )
+        self.assertEqual(recording["snapshots"][-1]["state"]["board"], room.board)
+        self.assertEqual(recording["snapshots"][-1]["state_hash"], snapshot_hash(serialize_room(room)))
 
     def test_expanded_coordinates_are_valid_only_in_expanded_mode(self):
         classic, classic_player = self.make_room("CLASSIC", mode="classic")

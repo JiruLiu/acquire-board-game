@@ -4,6 +4,7 @@ import copy
 import os
 import random
 import re
+import secrets
 import string
 import threading
 import uuid
@@ -11,6 +12,15 @@ from dataclasses import dataclass, field
 
 from flask import Flask, jsonify, render_template, request
 from flask_socketio import SocketIO, join_room as socket_join_room, leave_room as socket_leave_room
+
+from recording_store import (
+    SCHEMA_VERSION,
+    RecordingStore,
+    default_database_path,
+    new_recording_id,
+    snapshot_hash,
+    validate_snapshot_state,
+)
 
 
 GAME_MODES = {
@@ -66,6 +76,9 @@ class Room:
     password: str
     creator_id: str
     mode: str = DEFAULT_GAME_MODE
+    seed: int = field(default_factory=lambda: secrets.randbits(32))
+    recording_id: str | None = None
+    recording_sequence: int | None = None
     players: list[Player] = field(default_factory=list)
     spectator_ids: set[str] = field(default_factory=set)
     spectator_names: dict[str, str] = field(default_factory=dict)
@@ -104,6 +117,7 @@ class Room:
 
 app = Flask(__name__)
 socketio = SocketIO(app, async_mode="threading")
+recording_store = RecordingStore(default_database_path())
 rooms: dict[str, Room] = {}
 next_room_number = 1
 room_lock = threading.Lock()
@@ -136,6 +150,211 @@ def room_tiles(room: Room) -> list[str]:
 
 def room_max_players(room: Room) -> int:
     return game_mode_config(room)["max_players"]
+
+
+def serialize_player(player: Player) -> dict:
+    return {
+        "id": player.id,
+        "name": player.name,
+        "money": player.money,
+        "companies_built": player.companies_built,
+        "companies_acquired": player.companies_acquired,
+        "stocks": dict(player.stocks),
+        "tiles": list(player.tiles),
+    }
+
+
+def serialize_room(room: Room) -> dict:
+    mode = game_mode_config(room)
+    return copy.deepcopy({
+        "schema_version": SCHEMA_VERSION,
+        "room_id": room.id,
+        "room_name": room.name,
+        "creator_id": room.creator_id,
+        "mode": room.mode,
+        "seed": room.seed,
+        "recording_id": room.recording_id,
+        "recording_sequence": room.recording_sequence,
+        "board_rows": mode["rows"],
+        "board_columns": mode["columns"],
+        "rules": {
+            "starting_cash": STARTING_CASH,
+            "starting_bank_shares": STARTING_BANK_SHARES,
+            "super_company_size": SUPER_COMPANY_SIZE,
+            "game_end_company_size": GAME_END_COMPANY_SIZE,
+            "max_players": mode["max_players"],
+        },
+        "players": [serialize_player(player) for player in room.players],
+        "spectator_ids": sorted(room.spectator_ids),
+        "spectator_names": dict(sorted(room.spectator_names.items())),
+        "started": room.started,
+        "current_turn": room.current_turn,
+        "deck": list(room.deck),
+        "board": room.board,
+        "companies_found": room.companies_found,
+        "bank_stocks": room.bank_stocks,
+        "stocks_bought_this_turn": room.stocks_bought_this_turn,
+        "pending_found_player_id": room.pending_found_player_id,
+        "pending_found_tiles": room.pending_found_tiles,
+        "pending_finish_player_id": room.pending_finish_player_id,
+        "pending_acquire_starter_id": room.pending_acquire_starter_id,
+        "pending_acquire_survivor_choices": room.pending_acquire_survivor_choices,
+        "pending_acquire_survivor": room.pending_acquire_survivor,
+        "pending_acquire_targets": room.pending_acquire_targets,
+        "pending_acquire_sizes": room.pending_acquire_sizes,
+        "pending_acquire_reward_details": room.pending_acquire_reward_details,
+        "pending_acquire_ordering": room.pending_acquire_ordering,
+        "pending_acquire_player_order": room.pending_acquire_player_order,
+        "pending_acquire_player_index": room.pending_acquire_player_index,
+        "pending_acquire_target_index": room.pending_acquire_target_index,
+        "end_pending": room.end_pending,
+        "game_over": room.game_over,
+        "final_rankings": room.final_rankings,
+        "winner": room.winner,
+        "last_action": room.last_action,
+        "last_placed_tile": room.last_placed_tile,
+        "last_placed_started_acquire": room.last_placed_started_acquire,
+    })
+
+
+def deserialize_room(state: dict, password: str = "") -> Room:
+    errors = validate_snapshot_state(state)
+    if errors:
+        raise ValueError(f"Invalid recorded state: {errors[0]}")
+    mode = state.get("mode", DEFAULT_GAME_MODE)
+    if mode not in GAME_MODES:
+        raise ValueError(f"Invalid recorded state: unknown game mode {mode!r}")
+
+    players = [
+        Player(
+            id=player["id"],
+            name=player["name"],
+            money=player["money"],
+            companies_built=player["companies_built"],
+            companies_acquired=player["companies_acquired"],
+            stocks=dict(player["stocks"]),
+            tiles=list(player["tiles"]),
+        )
+        for player in state["players"]
+    ]
+    return Room(
+        id=state["room_id"],
+        name=state["room_name"],
+        password=password,
+        creator_id=state["creator_id"],
+        mode=mode,
+        seed=state["seed"],
+        recording_id=state.get("recording_id"),
+        recording_sequence=state.get("recording_sequence"),
+        players=players,
+        spectator_ids=set(state.get("spectator_ids") or []),
+        spectator_names=dict(state.get("spectator_names") or {}),
+        started=state["started"],
+        current_turn=state["current_turn"],
+        deck=list(state["deck"]),
+        board=copy.deepcopy(state["board"]),
+        companies_found=dict(state["companies_found"]),
+        bank_stocks=dict(state["bank_stocks"]),
+        stocks_bought_this_turn=state["stocks_bought_this_turn"],
+        pending_found_player_id=state["pending_found_player_id"],
+        pending_found_tiles=list(state["pending_found_tiles"]),
+        pending_finish_player_id=state["pending_finish_player_id"],
+        pending_acquire_starter_id=state["pending_acquire_starter_id"],
+        pending_acquire_survivor_choices=list(state["pending_acquire_survivor_choices"]),
+        pending_acquire_survivor=state["pending_acquire_survivor"],
+        pending_acquire_targets=list(state["pending_acquire_targets"]),
+        pending_acquire_sizes=dict(state["pending_acquire_sizes"]),
+        pending_acquire_reward_details=copy.deepcopy(
+            state["pending_acquire_reward_details"]
+        ),
+        pending_acquire_ordering=state["pending_acquire_ordering"],
+        pending_acquire_player_order=list(state["pending_acquire_player_order"]),
+        pending_acquire_player_index=state["pending_acquire_player_index"],
+        pending_acquire_target_index=state["pending_acquire_target_index"],
+        end_pending=state["end_pending"],
+        game_over=state["game_over"],
+        final_rankings=copy.deepcopy(state["final_rankings"]),
+        winner=state["winner"],
+        last_action=state["last_action"],
+        last_placed_tile=state["last_placed_tile"],
+        last_placed_started_acquire=state["last_placed_started_acquire"],
+    )
+
+
+def recording_status(room: Room) -> dict:
+    if not room.started:
+        status = "not_started"
+    elif room.game_over and room.recording_id:
+        status = "completed"
+    elif room.recording_id:
+        status = "active"
+    else:
+        status = "disabled"
+    return {"status": status, "sequence": room.recording_sequence}
+
+
+def start_room_recording(room: Room, actor_id: str) -> None:
+    room.recording_id = new_recording_id()
+    room.recording_sequence = 0
+    state = serialize_room(room)
+    try:
+        errors = validate_snapshot_state(state)
+        if errors:
+            raise ValueError(errors[0])
+        pruned_ids = recording_store.create_game(
+            recording_id=room.recording_id,
+            room_id=room.id,
+            room_name=room.name,
+            mode=room.mode,
+            seed=room.seed,
+            state=state,
+            actor_id=actor_id,
+            event_input={"mode": room.mode, "seed": room.seed},
+        )
+        for candidate in rooms.values():
+            if candidate.recording_id in pruned_ids:
+                candidate.recording_id = None
+                candidate.recording_sequence = None
+    except Exception:
+        app.logger.exception("Could not start recording for room %s", room.id)
+        room.recording_id = None
+        room.recording_sequence = None
+
+
+def record_room_event(
+    room: Room,
+    event_type: str,
+    actor_id: str | None,
+    event_input: dict | None = None,
+) -> None:
+    if not room.recording_id:
+        return
+    previous_sequence = room.recording_sequence
+    room.recording_sequence = (previous_sequence if previous_sequence is not None else -1) + 1
+    state = serialize_room(room)
+    try:
+        errors = validate_snapshot_state(state)
+        if errors:
+            raise ValueError(errors[0])
+        sequence = recording_store.append_snapshot(
+            room.recording_id,
+            event_type=event_type,
+            actor_id=actor_id,
+            event_input=event_input or {},
+            state=state,
+            completed=room.game_over,
+        )
+        if sequence is None:
+            room.recording_id = None
+            room.recording_sequence = None
+        else:
+            room.recording_sequence = sequence
+    except Exception:
+        app.logger.exception(
+            "Could not record %s for room %s", event_type, room.id
+        )
+        room.recording_id = None
+        room.recording_sequence = None
 
 
 def player_socket_room(room_id: str, player_id: str) -> str:
@@ -252,6 +471,8 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "room_name": room.name,
         "game_mode": room.mode,
         "game_mode_label": mode["label"],
+        "seed": room.seed,
+        "recording": recording_status(room),
         "board_rows": mode["rows"],
         "board_columns": mode["columns"],
         "max_players": mode["max_players"],
@@ -872,7 +1093,9 @@ def advance_turn(room: Room) -> str:
 
 def new_room_id() -> str:
     while True:
-        candidate = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        candidate = "".join(
+            secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6)
+        )
         if candidate not in rooms:
             return candidate
 
@@ -921,6 +1144,22 @@ def parse_stock_count(value, field_name: str) -> int:
     return quantity
 
 
+def parse_seed(value) -> int:
+    if value is None or value == "":
+        return secrets.randbits(32)
+    if isinstance(value, bool):
+        raise ValueError("Seed must be a whole number from 0 to 4294967295.")
+    if isinstance(value, int):
+        seed = value
+    elif isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
+        seed = int(value)
+    else:
+        raise ValueError("Seed must be a whole number from 0 to 4294967295.")
+    if not 0 <= seed <= 0xFFFFFFFF:
+        raise ValueError("Seed must be a whole number from 0 to 4294967295.")
+    return seed
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -938,6 +1177,7 @@ def list_rooms():
                 "creator_id": room.creator_id,
                 "game_mode": room.mode,
                 "game_mode_label": game_mode_config(room)["label"],
+                "seed": room.seed,
                 "board_size": (
                     f"{len(room_rows(room))}x{len(room_columns(room))}"
                 ),
@@ -1008,6 +1248,7 @@ def create_room():
                 raise ValueError("Room password must be 1-24 characters.")
             if game_mode not in GAME_MODES:
                 raise ValueError("Unknown game mode.")
+            seed = parse_seed(data.get("seed"))
             room_id = new_room_id()
             player = Player(id=uuid.uuid4().hex, name=player_name)
             room = Room(
@@ -1016,6 +1257,7 @@ def create_room():
                 password=room_password,
                 creator_id=player.id,
                 mode=game_mode,
+                seed=seed,
                 players=[player],
                 last_action=f"{player_name} created the room.",
             )
@@ -1129,14 +1371,15 @@ def start_room(room_id: str):
             if len(lowered_names) != len(set(lowered_names)):
                 return jsonify({"error": "Duplicate player names are not allowed."}), 400
 
+            rng = random.Random(room.seed)
             join_order = [player.id for player in room.players]
-            random.shuffle(room.players)
+            rng.shuffle(room.players)
             if [player.id for player in room.players] == join_order:
                 room.players.append(room.players.pop(0))
 
             room.started = True
             room.deck = room_tiles(room)
-            random.shuffle(room.deck)
+            rng.shuffle(room.deck)
             room.board = {}
             room.companies_found = {color: False for color in STOCK_COLORS}
             room.bank_stocks = {color: STARTING_BANK_SHARES for color in STOCK_COLORS}
@@ -1164,6 +1407,7 @@ def start_room(room_id: str):
                 f"The game started. {first_player.name} starts their turn with "
                 f"${first_player.money:,}."
             )
+            start_room_recording(room, player_id)
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1244,6 +1488,7 @@ def sort_tiles(room_id: str):
             active_tiles = sorted([tile for tile in player.tiles if tile], key=rack_sort_key)
             empty_slots = [tile for tile in player.tiles if not tile]
             player.tiles = active_tiles + empty_slots
+            record_room_event(room, "sort_tiles", player_id)
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1277,6 +1522,12 @@ def buy_stocks(room_id: str):
             room.last_action = (
                 f"{player.name} bought {bought_text} stock"
                 f"{'' if quantity_total == 1 else 's'} for ${total_cost}."
+            )
+            record_room_event(
+                room,
+                "buy_stocks",
+                player_id,
+                {"purchases": clean_purchases},
             )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
@@ -1450,6 +1701,7 @@ def place_tile(room_id: str):
             append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
+            record_room_event(room, "place_tile", player_id, {"tile": tile})
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1514,6 +1766,12 @@ def found_company(room_id: str):
             append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
+            record_room_event(
+                room,
+                "found_company",
+                player_id,
+                {"color": color or None},
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1578,6 +1836,12 @@ def set_acquire_survivor(room_id: str):
                 elif room.pending_acquire_survivor:
                     room.last_action = f"{survivor} chosen as the surviving company."
 
+            record_room_event(
+                room,
+                "set_acquire_survivor",
+                player_id,
+                {"survivor": survivor},
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1628,6 +1892,12 @@ def set_acquire_order(room_id: str):
                     f"{survivor} is the surviving company."
                 )
 
+            record_room_event(
+                room,
+                "set_acquire_order",
+                player_id,
+                {"order": list(order)},
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1704,6 +1974,16 @@ def trade_stocks(room_id: str):
                 if room.end_pending:
                     room.last_action += " Game will end when this turn is finished."
 
+            record_room_event(
+                room,
+                "trade_stocks",
+                player_id,
+                {
+                    "target": target,
+                    "sell": sell_count,
+                    "trade": trade_count,
+                },
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1766,6 +2046,12 @@ def finish_turn(room_id: str):
                         f"{player.name} finished their turn with ${player.money:,}. "
                         f"Game over. {room.winner} wins."
                     )
+                record_room_event(
+                    room,
+                    "finish_turn",
+                    player_id,
+                    {"purchases": clean_purchases},
+                )
                 state = build_public_room_state(room, player_id)
                 broadcast_room_state(room)
                 return jsonify(state)
@@ -1801,6 +2087,12 @@ def finish_turn(room_id: str):
                     f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
                     f"{room.last_action}"
                 )
+            record_room_event(
+                room,
+                "finish_turn",
+                player_id,
+                {"purchases": clean_purchases},
+            )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:

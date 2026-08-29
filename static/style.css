@@ -318,6 +318,24 @@ h1 {
   align-items: stretch;
 }
 
+.room-options-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5.8vw, 0.42fr);
+  gap: 0.55vw;
+}
+
+.seed-help {
+  margin-top: -0.52vw;
+  color: var(--muted);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.52vw;
+  text-align: right;
+}
+
+.seed-field-row input {
+  min-width: 0;
+}
+
 .room-create-row {
   margin-top: 0.1vw;
   justify-content: flex-start;
@@ -594,6 +612,23 @@ button:disabled {
   background: #c7ddf8;
 }
 
+.board-cell.spectator-player-tile-highlight {
+  z-index: 3;
+  background: #ffe69a;
+  border-color: #b66a00;
+  box-shadow:
+    inset 0 0 0 0.13vw #7a4300,
+    0 0 0 0.13vw rgba(255, 178, 36, 0.82),
+    0 0 0.72vw rgba(255, 155, 0, 0.92);
+  transform: scale(1.1);
+  animation: spectator-tile-pulse 0.72s ease-in-out infinite alternate;
+}
+
+@keyframes spectator-tile-pulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.12); }
+}
+
 .board-cell.target-selected {
   outline: 0.16vw solid rgba(15, 108, 92, 0.5);
   outline-offset: -0.16vw;
@@ -831,6 +866,26 @@ button:disabled {
 .spectator-player-tiles {
   display: grid;
   gap: 0.3vw;
+}
+
+.spectator-player-name-target {
+  cursor: crosshair;
+  border-radius: 0.24vw;
+  outline: none;
+}
+
+.spectator-player-name-target:hover,
+.spectator-player-name-target:focus-visible,
+.spectator-player-name-target.is-tile-hovered {
+  color: #9a5600;
+  background: #ffe69a;
+  box-shadow: 0 0 0 0.18vw rgba(255, 178, 36, 0.4);
+}
+
+.spectator-player-name {
+  width: max-content;
+  max-width: 100%;
+  padding: 0.1vw 0.22vw;
 }
 
 .spectator-tile-list {
@@ -1944,6 +1999,16 @@ button:disabled {
   .room-shell-body {
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  .room-options-row {
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 0.45fr);
+    gap: 8px;
+  }
+
+  .seed-help {
+    margin-top: -6px;
+    font-size: clamp(0.58rem, 1.8vw, 0.72rem);
   }
 
   .room-section {

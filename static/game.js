@@ -17,6 +17,7 @@ const state = {
   endingClosed: false,
   spectatorTilesSorted: false,
   spectatorCheckedTile: null,
+  spectatorHoveredPlayerId: null,
 };
 
 const socket = io();
@@ -462,6 +463,10 @@ function renderBoard() {
   elements.board.innerHTML = "";
   const boardData = state.roomState?.board || {};
   const lastPlacedTile = state.roomState?.last_placed_tile;
+  const hoveredPlayer = state.roomState?.is_spectator
+    ? state.roomState.players?.find((player) => player.id === state.spectatorHoveredPlayerId)
+    : null;
+  const hoveredPlayerTiles = new Set((hoveredPlayer?.tiles || []).filter(Boolean));
   const ownedTiles = new Set(
     (state.roomState?.players || []).flatMap((player) => player.tiles || []).filter(Boolean),
   );
@@ -478,6 +483,9 @@ function renderBoard() {
       }
       if (tile === state.spectatorCheckedTile) {
         button.classList.add("checked-owned-tile");
+      }
+      if (hoveredPlayerTiles.has(tile)) {
+        button.classList.add("spectator-player-tile-highlight");
       }
 
       const boardEntry = boardData[tile];
@@ -601,7 +609,7 @@ function applyRoomState(nextState, fallbackMessage = "Connected.") {
   document.documentElement.style.setProperty("--board-columns", String(columnCount));
   document.documentElement.style.setProperty("--board-gap-count", String(columnCount - 1));
   elements.gameModeBadge.textContent = (
-    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount}`
+    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount} · Seed ${nextState.seed}`
   );
   document.body.dataset.gameMode = nextState.game_mode || "classic";
   document.title = `Acquire · ${nextState.game_mode_label || "Classic"}`;
@@ -636,6 +644,35 @@ function compareTilesByRackOrder(left, right) {
 function displayPlayerName(name) {
   if (!name) return "";
   return String(name).slice(0, 8);
+}
+
+function updateSpectatorPlayerHoverClasses() {
+  document.querySelectorAll("[data-spectator-player-id]").forEach((element) => {
+    element.classList.toggle(
+      "is-tile-hovered",
+      element.dataset.spectatorPlayerId === state.spectatorHoveredPlayerId,
+    );
+  });
+}
+
+function setSpectatorHoveredPlayer(playerId) {
+  if (!state.roomState?.is_spectator) return;
+  state.spectatorHoveredPlayerId = playerId;
+  updateSpectatorPlayerHoverClasses();
+  renderBoard();
+}
+
+function enableSpectatorPlayerHover(element, player) {
+  if (!state.roomState?.is_spectator || !player) return;
+  element.classList.add("spectator-player-name-target");
+  element.classList.toggle("is-tile-hovered", player.id === state.spectatorHoveredPlayerId);
+  element.dataset.spectatorPlayerId = player.id;
+  element.title = `Highlight ${player.name}'s tiles on the board`;
+  element.tabIndex = 0;
+  element.addEventListener("mouseenter", () => setSpectatorHoveredPlayer(player.id));
+  element.addEventListener("mouseleave", () => setSpectatorHoveredPlayer(null));
+  element.addEventListener("focus", () => setSpectatorHoveredPlayer(player.id));
+  element.addEventListener("blur", () => setSpectatorHoveredPlayer(null));
 }
 
 function stockCell(stocks, color) {
@@ -681,6 +718,7 @@ function renderHoldings() {
       <td class="money-cell">${player ? formatMoney(player.money) : ""}</td>
       ${stockCells}
     `;
+    enableSpectatorPlayerHover(row.querySelector(".player-name-cell"), player);
     elements.holdingsBody.appendChild(row);
   }
 
@@ -1149,7 +1187,17 @@ function renderSpectatorMode() {
   const isSpectator = !!state.roomState?.is_spectator;
   document.body.classList.toggle("spectator-mode", isSpectator);
   elements.spectatorTilesPanel.hidden = !isSpectator;
-  if (!isSpectator) return;
+  if (!isSpectator) {
+    state.spectatorHoveredPlayerId = null;
+    return;
+  }
+
+  const hoveredPlayerStillExists = (state.roomState.players || []).some(
+    (player) => player.id === state.spectatorHoveredPlayerId,
+  );
+  if (!hoveredPlayerStillExists) {
+    state.spectatorHoveredPlayerId = null;
+  }
 
   elements.spectatorTiles.innerHTML = "";
   for (const player of state.roomState.players || []) {
@@ -1160,12 +1208,16 @@ function renderSpectatorMode() {
       tiles.sort(compareTilesByRackOrder);
     }
     row.innerHTML = `
-      <strong>${player.name}</strong>
+      <strong class="spectator-player-name"></strong>
       <div class="spectator-tile-list">
         ${tiles.map((tile) => `<span class="spectator-tile">${displayTile(tile)}</span>`).join("") || '<span class="panel-note">No tiles</span>'}
       </div>`;
+    const playerName = row.querySelector(".spectator-player-name");
+    playerName.textContent = player.name;
+    enableSpectatorPlayerHover(playerName, player);
     elements.spectatorTiles.appendChild(row);
   }
+  updateSpectatorPlayerHoverClasses();
 }
 
 function handleSpectatorSortTiles() {
