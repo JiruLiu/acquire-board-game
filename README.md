@@ -11,6 +11,7 @@ This repository is a private, browser-based multiplayer board game inspired by h
 - Plain `HTML`, `CSS`, and `JavaScript` frontend
 - In-memory room state
 - SQLite game recordings for debugging
+- browser-based replays with action-by-action navigation
 - Turn-based shared board with tile dealing
 
 Current features include:
@@ -97,6 +98,8 @@ The room disappears from **Existing Rooms** when no players are connected. Spect
 ## 3. Game recordings
 
 A recording begins when a room successfully starts. Every successful game action stores its event metadata and the complete resulting state. Lobby-only rooms are not recorded.
+
+The lobby lists the ten retained recordings under **Recent Replays**. Open one to view the game through the spectator interface, then use the left and right arrows to move between recorded actions. Replays are read-only, redact reusable player identifiers, and show the final score panel when a completed game reaches its last action.
 
 By default, recordings are stored at:
 

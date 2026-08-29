@@ -84,6 +84,66 @@ body {
   text-align: center;
 }
 
+.replay-controls {
+  width: min(25vw, 430px);
+  margin: 0 auto 0.55vw;
+  padding: 0.38vw 0.48vw;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.38vw;
+}
+
+.replay-controls[hidden] {
+  display: none;
+}
+
+.replay-lobby-link,
+.replay-arrow {
+  display: inline-grid;
+  min-width: 2.1vw;
+  min-height: 1.75vw;
+  place-items: center;
+  border-radius: 0.42vw;
+  background: var(--ink);
+  color: white;
+  font-size: 0.68vw;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+}
+
+.replay-lobby-link {
+  padding: 0.4vw 0.52vw;
+  font-size: 0.55vw;
+}
+
+.replay-arrow {
+  padding: 0.32vw;
+}
+
+.replay-progress {
+  display: grid;
+  min-width: 0;
+  gap: 0.05vw;
+  justify-items: center;
+  text-align: center;
+}
+
+.replay-progress strong {
+  color: var(--ink);
+  font-size: 0.62vw;
+}
+
+.replay-progress span {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.52vw;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .game-title-block {
   display: grid;
   justify-items: center;
@@ -472,7 +532,22 @@ button:disabled {
   flex: 1;
 }
 
+.room-details-panel {
+  gap: 0.75vw;
+}
+
+.recent-replays-block {
+  display: flex;
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: 13vw;
+  flex-direction: column;
+  padding-top: 0.65vw;
+  border-top: 1px solid rgba(31, 42, 47, 0.1);
+}
+
 .available-rooms-header,
+.recent-replays-header,
 .available-room-summary,
 .available-room-actions {
   display: flex;
@@ -483,6 +558,15 @@ button:disabled {
 
 .available-rooms-header h2 {
   font-size: 1.42vw;
+}
+
+.recent-replays-header h2 {
+  font-size: 1.02vw;
+}
+
+.recent-replays-limit {
+  color: var(--muted);
+  font-size: 0.58vw;
 }
 
 .available-rooms {
@@ -610,6 +694,54 @@ button:disabled {
 
 .board-cell.checked-owned-tile {
   background: #c7ddf8;
+}
+
+.recent-replays {
+  display: grid;
+  gap: 0.35vw;
+  margin-top: 0.4vw;
+  overflow-y: auto;
+}
+
+.recent-replay-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45vw;
+  padding: 0.42vw 0.5vw;
+  border: 1px solid rgba(31, 42, 47, 0.1);
+  border-radius: 0.42vw;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.recent-replay-summary {
+  display: grid;
+  min-width: 0;
+  gap: 0.08vw;
+  color: var(--muted);
+  font-size: 0.53vw;
+}
+
+.recent-replay-summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.66vw;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.replay-open-button {
+  border-radius: 0.42vw;
+  padding: 0.3vw 0.48vw;
+  background: var(--ink);
+  color: white;
+  font-size: 0.56vw;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.replay-open-button:hover {
+  transform: translateY(-1px);
 }
 
 .board-cell.spectator-player-tile-highlight {
@@ -928,6 +1060,11 @@ button:disabled {
   cursor: default;
   font-weight: 700;
   opacity: 0.72;
+}
+
+.replay-mode #copy-link-button,
+.replay-mode .spectator-presence {
+  display: none;
 }
 
 .game-leftbar {
@@ -2016,6 +2153,46 @@ button:disabled {
     border-radius: 12px;
   }
 
+  .room-details-panel {
+    gap: 14px;
+  }
+
+  .recent-replays-block {
+    max-height: 300px;
+    padding-top: 12px;
+  }
+
+  .recent-replays-header h2 {
+    font-size: clamp(1rem, 3.5vw, 1.3rem);
+  }
+
+  .recent-replays-limit,
+  .recent-replay-summary,
+  .recent-replay-summary strong,
+  .replay-open-button {
+    font-size: clamp(0.68rem, 2vw, 0.84rem);
+  }
+
+  .recent-replays {
+    gap: 7px;
+    margin-top: 8px;
+  }
+
+  .recent-replay-card {
+    gap: 8px;
+    padding: 8px 9px;
+    border-radius: 9px;
+  }
+
+  .recent-replay-summary {
+    gap: 2px;
+  }
+
+  .replay-open-button {
+    border-radius: 8px;
+    padding: 7px 9px;
+  }
+
   .room-controls-panel label,
   .join-block label,
   .room-controls-panel .status,
@@ -2081,6 +2258,34 @@ button:disabled {
 
   .game-hero {
     gap: 8px;
+  }
+
+  .replay-controls {
+    width: min(100%, 430px);
+    margin-bottom: 10px;
+    padding: 7px 8px;
+    gap: 7px;
+  }
+
+  .replay-lobby-link,
+  .replay-arrow {
+    min-width: 38px;
+    min-height: 34px;
+    border-radius: 8px;
+    font-size: clamp(0.76rem, 2.4vw, 0.95rem);
+  }
+
+  .replay-lobby-link {
+    padding: 8px 9px;
+    font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .replay-progress strong {
+    font-size: clamp(0.72rem, 2.2vw, 0.9rem);
+  }
+
+  .replay-progress span {
+    font-size: clamp(0.62rem, 1.9vw, 0.78rem);
   }
 
   .action-prompt {

@@ -263,10 +263,195 @@ class GameRegressionTests(unittest.TestCase):
         recording = app_module.recording_store.get_game(room.recording_id)
         self.assertEqual(
             [snapshot["event_type"] for snapshot in recording["snapshots"]],
-            ["start_game", "sort_tiles", "place_tile"],
+            ["start_game", "sort_tiles", "place_tile", "auto_finish_turn"],
         )
         self.assertEqual(recording["snapshots"][-1]["state"]["board"], room.board)
         self.assertEqual(recording["snapshots"][-1]["state_hash"], snapshot_hash(serialize_room(room)))
+        replay_actions = self.client.get(
+            f"/api/replays/{room.recording_id}"
+        ).get_json()["actions"]
+        self.assertEqual(
+            [action["message"] for action in replay_actions],
+            [
+                recording["snapshots"][0]["state"]["last_action"],
+                recording["snapshots"][1]["state"]["last_action"],
+                recording["snapshots"][2]["state"]["last_action"],
+                recording["snapshots"][3]["state"]["last_action"],
+            ],
+        )
+        self.assertIsNone(room.pending_finish_player_id)
+        self.assertNotEqual(room.players[room.current_turn].id, current_player.id)
+        self.assertEqual(len([tile for tile in current_player.tiles if tile]), 6)
+        self.assertIn("automatically finished", room.last_action)
+
+    def test_company_on_board_keeps_normal_buy_and_finish_step(self):
+        players = [
+            Player(id="active", name="Active", tiles=["B1"]),
+            Player(id="waiting", name="Waiting", tiles=["I12"]),
+        ]
+        room = Room(
+            id="HASCOMPANY",
+            name="Company room",
+            password="pw",
+            creator_id=players[0].id,
+            players=players,
+            started=True,
+            deck=["I11"],
+            board={
+                "A1": {"placed_by": "Active", "company": "red"},
+                "A2": {"placed_by": "Active", "company": "red"},
+            },
+        )
+        room.companies_found["red"] = True
+        rooms[room.id] = room
+
+        response = self.client.post(
+            "/api/rooms/HASCOMPANY/place_tile",
+            json={"player_id": "active", "tile": "B1"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(room.pending_finish_player_id, "active")
+        self.assertEqual(room.players[room.current_turn].id, "active")
+        self.assertIn("Buy stocks or click Finish", room.last_action)
+
+        finish_response = self.client.post(
+            "/api/rooms/HASCOMPANY/finish_turn",
+            json={"player_id": "active", "purchases": {}},
+        )
+        self.assertEqual(finish_response.status_code, 200)
+        self.assertIsNone(room.pending_finish_player_id)
+        self.assertEqual(room.players[room.current_turn].id, "waiting")
+        self.assertNotIn("automatically finished", room.last_action)
+
+    def test_founding_choice_waits_then_declining_auto_finishes_without_companies(self):
+        players = [
+            Player(id="active", name="Active", tiles=["A2"]),
+            Player(id="waiting", name="Waiting", tiles=["I12"]),
+        ]
+        room = Room(
+            id="DECLINE",
+            name="Founding room",
+            password="pw",
+            creator_id=players[0].id,
+            players=players,
+            started=True,
+            deck=["I11"],
+            board={"A1": {"placed_by": "Waiting", "company": None}},
+        )
+        rooms[room.id] = room
+
+        place_response = self.client.post(
+            "/api/rooms/DECLINE/place_tile",
+            json={"player_id": "active", "tile": "A2"},
+        )
+        self.assertEqual(place_response.status_code, 200)
+        self.assertEqual(room.pending_found_player_id, "active")
+        self.assertEqual(room.players[room.current_turn].id, "active")
+
+        decline_response = self.client.post(
+            "/api/rooms/DECLINE/found_company",
+            json={"player_id": "active", "color": None},
+        )
+
+        self.assertEqual(decline_response.status_code, 200)
+        self.assertIsNone(room.pending_found_player_id)
+        self.assertIsNone(room.pending_finish_player_id)
+        self.assertEqual(room.players[room.current_turn].id, "waiting")
+        self.assertIn("automatically finished", room.last_action)
+
+    def test_replay_endpoints_list_actions_and_return_redacted_spectator_state(self):
+        room, creator = self.make_room("REPLAY")
+        creator.id = "secret-creator-id"
+        room.creator_id = creator.id
+        room.players.append(Player(id="secret-opponent-id", name="Player2"))
+        start_response = self.client.post(
+            "/api/rooms/REPLAY/start",
+            json={"player_id": creator.id},
+        )
+        self.assertEqual(start_response.status_code, 200)
+        recording_id = room.recording_id
+
+        list_response = self.client.get("/api/replays")
+        details_response = self.client.get(f"/api/replays/{recording_id}")
+        snapshot_response = self.client.get(
+            f"/api/replays/{recording_id}/snapshots/0"
+        )
+        page_response = self.client.get(f"/replay/{recording_id}")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.get_json()["replays"][0]["action_count"], 1)
+        self.assertEqual(details_response.status_code, 200)
+        replay_action = details_response.get_json()["actions"][0]
+        self.assertEqual(replay_action["sequence"], 0)
+        self.assertEqual(replay_action["event_type"], "start_game")
+        self.assertEqual(replay_action["message"], room.last_action)
+        self.assertEqual(snapshot_response.status_code, 200)
+        replay_state = snapshot_response.get_json()["state"]
+        self.assertTrue(replay_state["is_spectator"])
+        self.assertTrue(replay_state["is_replay"])
+        self.assertEqual(replay_state["players"][0]["id"], "player-1")
+        self.assertNotIn(creator.id, str(snapshot_response.get_json()))
+        self.assertNotIn("deck", replay_state)
+        self.assertEqual(page_response.status_code, 200)
+        self.assertIn(recording_id.encode(), page_response.data)
+
+    def test_replay_final_snapshot_preserves_game_end_results(self):
+        room, creator = self.make_room("FINISHED")
+        room.players.append(Player(id="player-2", name="Player2"))
+        self.client.post(
+            "/api/rooms/FINISHED/start",
+            json={"player_id": creator.id},
+        )
+        winner = room.players[0]
+        room.game_over = True
+        room.winner = winner.name
+        room.final_rankings = [{
+            "player_id": winner.id,
+            "name": winner.name,
+            "final_total": winner.money,
+        }]
+        app_module.record_room_event(room, "finish_turn", winner.id)
+
+        response = self.client.get(
+            f"/api/replays/{room.recording_id}/snapshots/1"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["game"]["status"], "completed")
+        self.assertTrue(payload["state"]["game_over"])
+        self.assertEqual(payload["state"]["winner"], winner.name)
+        self.assertEqual(payload["state"]["final_rankings"][0]["player_id"], "player-1")
+
+    def test_replay_snapshot_allows_last_placed_tile_without_owner_label(self):
+        room, creator = self.make_room("NULLOWNER")
+        room.players.append(Player(id="player-2", name="Player2"))
+        self.client.post(
+            "/api/rooms/NULLOWNER/start",
+            json={"player_id": creator.id},
+        )
+        current_player = room.players[room.current_turn]
+        tile_index = next(
+            index for index, tile in enumerate(current_player.tiles) if tile
+        )
+        tile = current_player.tiles[tile_index]
+        current_player.tiles[tile_index] = None
+        room.board[tile] = {"placed_by": None, "company": None}
+        room.last_placed_tile = tile
+        room.last_action = f"{current_player.name} placed a tile."
+        app_module.record_room_event(room, "place_tile", current_player.id)
+
+        response = self.client.get(
+            f"/api/replays/{room.recording_id}/snapshots/1"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.get_json()["state"]["board"][tile]["placed_by"])
+
+    def test_missing_replay_and_snapshot_return_not_found(self):
+        self.assertEqual(self.client.get("/replay/missing").status_code, 404)
+        self.assertEqual(self.client.get("/api/replays/missing").status_code, 404)
 
     def test_expanded_coordinates_are_valid_only_in_expanded_mode(self):
         classic, classic_player = self.make_room("CLASSIC", mode="classic")

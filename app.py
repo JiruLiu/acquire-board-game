@@ -10,7 +10,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request
 from flask_socketio import SocketIO, join_room as socket_join_room, leave_room as socket_leave_room
 
 from recording_store import (
@@ -517,6 +517,47 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
     })
 
 
+def replay_game_metadata(game: dict) -> dict:
+    mode = GAME_MODES.get(game.get("mode"), GAME_MODES[DEFAULT_GAME_MODE])
+    return {
+        "recording_id": game["recording_id"],
+        "room_name": game["room_name"],
+        "game_mode": game["mode"],
+        "game_mode_label": mode["label"],
+        "board_size": f"{len(mode['rows'])}x{len(mode['columns'])}",
+        "seed": game["seed"],
+        "started_at": game["started_at"],
+        "updated_at": game["updated_at"],
+        "completed_at": game["completed_at"],
+        "status": game["status"],
+        "latest_sequence": game["latest_sequence"],
+        "action_count": game["latest_sequence"] + 1,
+    }
+
+
+def replay_action_metadata(snapshot: dict) -> dict:
+    return {
+        "sequence": snapshot["sequence"],
+        "recorded_at": snapshot["recorded_at"],
+        "event_type": snapshot["event_type"],
+        "message": snapshot.get("state", {}).get("last_action", ""),
+    }
+
+
+def build_replay_room_state(snapshot_state: dict, game: dict) -> dict:
+    room = deserialize_room(snapshot_state)
+    replay_viewer_id = "replay-viewer"
+    room.spectator_ids.add(replay_viewer_id)
+    state = build_public_room_state(room, replay_viewer_id)
+    state["spectators"] = []
+    state["is_replay"] = True
+    state["recording"] = {
+        "status": game["status"],
+        "sequence": snapshot_state.get("recording_sequence"),
+    }
+    return state
+
+
 def draw_tile(room: Room, player: Player, preserve_slot: bool = False) -> bool:
     while room.deck:
         tile = room.deck.pop()
@@ -667,6 +708,91 @@ def begin_buying_if_current_player_has_no_tiles(room: Room) -> bool:
         f"{current_player.name} has no tiles. Buy stocks or click Finish."
     )
     return True
+
+
+def no_companies_on_board(room: Room) -> bool:
+    return not any(company_sizes(room).values())
+
+
+def should_auto_finish_without_companies(room: Room, player_id: str) -> bool:
+    return (
+        room.pending_finish_player_id == player_id
+        and not room.pending_found_player_id
+        and not pending_acquire_state(room)
+        and no_companies_on_board(room)
+    )
+
+
+def complete_current_turn(
+    room: Room,
+    player: Player,
+    player_id: str,
+    *,
+    quantity_total: int = 0,
+    total_cost: int = 0,
+    clean_purchases: dict[str, int] | None = None,
+    automatic_reason: str | None = None,
+) -> None:
+    clean_purchases = clean_purchases or {}
+    finish_wording = (
+        "automatically finished their turn"
+        if automatic_reason
+        else "finished their turn"
+    )
+
+    if room.end_pending:
+        liquidate_and_rank(room)
+        if clean_purchases:
+            bought_text = ", ".join(
+                f"{quantity} {color}" for color, quantity in clean_purchases.items()
+            )
+            room.last_action = (
+                f"{player.name} bought {bought_text} stock"
+                f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
+                f"{player.name} {finish_wording} with ${player.money:,}. "
+                f"Game over. {room.winner} wins."
+            )
+        else:
+            room.last_action = (
+                f"{player.name} {finish_wording} with ${player.money:,}. "
+                f"Game over. {room.winner} wins."
+            )
+    else:
+        tiles_drawn = fill_player_tiles(room, player)
+        room.pending_finish_player_id = None
+        room.stocks_bought_this_turn = 0
+        next_name = advance_turn(room)
+        next_player = room.players[room.current_turn]
+        no_tile_buying = begin_buying_if_current_player_has_no_tiles(room)
+        if tiles_drawn:
+            room.last_action = (
+                f"{player.name} {finish_wording} with ${player.money:,} and drew "
+                f"{tiles_drawn} tile{'' if tiles_drawn == 1 else 's'}. "
+                f"{next_name} starts their turn with ${next_player.money:,}."
+            )
+        else:
+            room.last_action = (
+                f"{player.name} {finish_wording} with ${player.money:,}. "
+                f"{next_name} starts their turn with ${next_player.money:,}."
+            )
+        if no_tile_buying:
+            room.last_action += f" {next_name} has no tiles and may buy stocks."
+        if clean_purchases:
+            bought_text = ", ".join(
+                f"{quantity} {color}" for color, quantity in clean_purchases.items()
+            )
+            room.last_action = (
+                f"{player.name} bought {bought_text} stock"
+                f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
+                f"{room.last_action}"
+            )
+
+    event_input: dict = {"purchases": clean_purchases}
+    event_type = "finish_turn"
+    if automatic_reason:
+        event_type = "auto_finish_turn"
+        event_input["reason"] = automatic_reason
+    record_room_event(room, event_type, player_id, event_input)
 
 
 def bonus_values_for_price(price: int) -> tuple[int, int, int]:
@@ -1165,6 +1291,69 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/api/replays")
+def list_replays():
+    response = jsonify({
+        "replays": [
+            replay_game_metadata(game)
+            for game in recording_store.list_games()
+        ]
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/replays/<recording_id>")
+def replay_details(recording_id: str):
+    recording = recording_store.export_game(recording_id)
+    if not recording:
+        return jsonify({"error": "Replay not found."}), 404
+    response = jsonify({
+        "game": replay_game_metadata(recording["game"]),
+        "actions": [
+            replay_action_metadata(snapshot)
+            for snapshot in recording["snapshots"]
+        ],
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@app.get("/api/replays/<recording_id>/snapshots/<int:sequence>")
+def replay_snapshot(recording_id: str, sequence: int):
+    recording = recording_store.export_game(recording_id)
+    if not recording:
+        return jsonify({"error": "Replay not found."}), 404
+    snapshot = next(
+        (
+            candidate
+            for candidate in recording["snapshots"]
+            if candidate["sequence"] == sequence
+        ),
+        None,
+    )
+    if not snapshot:
+        return jsonify({"error": "Replay action not found."}), 404
+    try:
+        state = build_replay_room_state(snapshot["state"], recording["game"])
+    except ValueError:
+        app.logger.exception(
+            "Could not reconstruct replay %s at sequence %s",
+            recording_id,
+            sequence,
+        )
+        return jsonify({
+            "error": "This recording is not compatible with the current replay viewer."
+        }), 409
+    response = jsonify({
+        "game": replay_game_metadata(recording["game"]),
+        "action": replay_action_metadata(snapshot),
+        "state": state,
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/rooms")
 def list_rooms():
     with room_lock:
@@ -1198,7 +1387,24 @@ def health():
 @app.get("/game/<room_id>")
 def game_page(room_id: str):
     player_id = request.args.get("player_id", "")
-    return render_template("game.html", room_id=room_id.upper(), player_id=player_id)
+    return render_template(
+        "game.html",
+        room_id=room_id.upper(),
+        player_id=player_id,
+        replay_id=None,
+    )
+
+
+@app.get("/replay/<recording_id>")
+def replay_page(recording_id: str):
+    if not recording_store.get_game(recording_id):
+        abort(404)
+    return render_template(
+        "game.html",
+        room_id="",
+        player_id="replay-viewer",
+        replay_id=recording_id,
+    )
 
 
 @socketio.on("join_room_state")
@@ -1698,10 +1904,23 @@ def place_tile(room_id: str):
 
             removed = remove_invalid_tiles(room)
             mark_end_pending_if_needed(room)
+            auto_finish = should_auto_finish_without_companies(room, player_id)
+            if auto_finish:
+                room.last_action = (
+                    f"{current_player.name} placed {tile_label}. "
+                    "No companies are on the board, so the turn will finish automatically."
+                )
             append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
             record_room_event(room, "place_tile", player_id, {"tile": tile})
+            if auto_finish:
+                complete_current_turn(
+                    room,
+                    current_player,
+                    player_id,
+                    automatic_reason="no_companies_on_board",
+                )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -1762,7 +1981,12 @@ def found_company(room_id: str):
             room.pending_finish_player_id = player.id
             removed = remove_invalid_tiles(room)
             mark_end_pending_if_needed(room)
-            room.last_action = f"{action} Buy stocks or click Finish."
+            auto_finish = should_auto_finish_without_companies(room, player_id)
+            room.last_action = (
+                f"{action} No companies are on the board, so the turn will finish automatically."
+                if auto_finish
+                else f"{action} Buy stocks or click Finish."
+            )
             append_invalid_tiles_notice(room, removed)
             if room.end_pending:
                 room.last_action += " Game will end when this turn is finished."
@@ -1772,6 +1996,13 @@ def found_company(room_id: str):
                 player_id,
                 {"color": color or None},
             )
+            if auto_finish:
+                complete_current_turn(
+                    room,
+                    player,
+                    player_id,
+                    automatic_reason="no_companies_on_board",
+                )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
@@ -2029,69 +2260,13 @@ def finish_turn(room_id: str):
                     require_purchase=False,
                 )
 
-            if room.end_pending:
-                liquidate_and_rank(room)
-                if clean_purchases:
-                    bought_text = ", ".join(
-                        f"{quantity} {color}" for color, quantity in clean_purchases.items()
-                    )
-                    room.last_action = (
-                        f"{player.name} bought {bought_text} stock"
-                        f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
-                        f"{player.name} finished their turn with ${player.money:,}. "
-                        f"Game over. {room.winner} wins."
-                    )
-                else:
-                    room.last_action = (
-                        f"{player.name} finished their turn with ${player.money:,}. "
-                        f"Game over. {room.winner} wins."
-                    )
-                record_room_event(
-                    room,
-                    "finish_turn",
-                    player_id,
-                    {"purchases": clean_purchases},
-                )
-                state = build_public_room_state(room, player_id)
-                broadcast_room_state(room)
-                return jsonify(state)
-
-            tiles_drawn = fill_player_tiles(room, player)
-
-            room.pending_finish_player_id = None
-            room.stocks_bought_this_turn = 0
-            next_name = advance_turn(room)
-            next_player = room.players[room.current_turn]
-            no_tile_buying = begin_buying_if_current_player_has_no_tiles(room)
-            if tiles_drawn:
-                room.last_action = (
-                    f"{player.name} finished their turn with ${player.money:,} and drew "
-                    f"{tiles_drawn} tile{'' if tiles_drawn == 1 else 's'}. "
-                    f"{next_name} starts their turn with ${next_player.money:,}."
-                )
-                if no_tile_buying:
-                    room.last_action += f" {next_name} has no tiles and may buy stocks."
-            else:
-                room.last_action = (
-                    f"{player.name} finished their turn with ${player.money:,}. "
-                    f"{next_name} starts their turn with ${next_player.money:,}."
-                )
-                if no_tile_buying:
-                    room.last_action += f" {next_name} has no tiles and may buy stocks."
-            if clean_purchases:
-                bought_text = ", ".join(
-                    f"{quantity} {color}" for color, quantity in clean_purchases.items()
-                )
-                room.last_action = (
-                    f"{player.name} bought {bought_text} stock"
-                    f"{'' if quantity_total == 1 else 's'} for ${total_cost}. "
-                    f"{room.last_action}"
-                )
-            record_room_event(
+            complete_current_turn(
                 room,
-                "finish_turn",
+                player,
                 player_id,
-                {"purchases": clean_purchases},
+                quantity_total=quantity_total,
+                total_cost=total_cost,
+                clean_purchases=clean_purchases,
             )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)

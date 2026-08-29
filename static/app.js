@@ -20,6 +20,7 @@ const elements = {
   status: document.getElementById("status"),
   createRoom: document.getElementById("create-room"),
   availableRooms: document.getElementById("available-rooms"),
+  recentReplays: document.getElementById("recent-replays"),
   refreshRooms: document.getElementById("refresh-rooms"),
 };
 
@@ -99,6 +100,55 @@ async function loadRooms() {
     elements.createRoom.disabled = state.roomEntryPending || state.roomEntryLocked;
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+function formatReplayTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function loadReplays() {
+  try {
+    const data = await api("/api/replays");
+    elements.recentReplays.innerHTML = "";
+    if (!data.replays.length) {
+      elements.recentReplays.innerHTML = '<p class="panel-note">No recorded games yet.</p>';
+      return;
+    }
+
+    for (const replay of data.replays) {
+      const card = document.createElement("article");
+      card.className = "recent-replay-card";
+
+      const summary = document.createElement("div");
+      summary.className = "recent-replay-summary";
+      const title = document.createElement("strong");
+      title.textContent = replay.room_name;
+      const details = document.createElement("span");
+      details.textContent = `${replay.game_mode_label} · ${replay.action_count} actions · Seed ${replay.seed}`;
+      const timing = document.createElement("span");
+      timing.textContent = `${replay.status === "completed" ? "Completed" : "In progress"} · ${formatReplayTime(replay.updated_at)}`;
+      summary.append(title, details, timing);
+
+      const link = document.createElement("a");
+      link.className = "replay-open-button";
+      link.href = `/replay/${encodeURIComponent(replay.recording_id)}`;
+      link.textContent = "Replay";
+      link.setAttribute("aria-label", `Replay ${replay.room_name}`);
+
+      card.append(summary, link);
+      elements.recentReplays.appendChild(card);
+    }
+  } catch (error) {
+    elements.recentReplays.innerHTML = '<p class="panel-note">Replays are temporarily unavailable.</p>';
   }
 }
 
@@ -216,5 +266,9 @@ socket.on("room_state", (data) => {
 });
 
 elements.createRoom.addEventListener("click", createRoom);
-elements.refreshRooms.addEventListener("click", loadRooms);
+elements.refreshRooms.addEventListener("click", () => {
+  loadRooms();
+  loadReplays();
+});
 loadRooms();
+loadReplays();
