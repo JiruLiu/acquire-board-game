@@ -1,7 +1,6 @@
-const ROWS = "ABCDEFGHI".split("");
-const COLUMNS = Array.from({ length: 12 }, (_, index) => String(index + 1));
+const DEFAULT_ROWS = "ABCDEFGHI".split("");
+const DEFAULT_COLUMNS = Array.from({ length: 12 }, (_, index) => String(index + 1));
 const STOCK_COLORS = ["red", "yellow", "green", "pink", "purple", "orange", "blue"];
-const MAX_PLAYERS = 5;
 
 const state = {
   roomId: window.GAME_BOOTSTRAP.roomId,
@@ -24,6 +23,7 @@ const socket = io();
 
 const elements = {
   status: document.getElementById("status"),
+  gameModeBadge: document.getElementById("game-mode-badge"),
   actionPromptLeft: document.getElementById("action-prompt-left"),
   actionPromptRight: document.getElementById("action-prompt-right"),
   tileRack: document.getElementById("tile-rack"),
@@ -71,6 +71,8 @@ const elements = {
   spectatorTilesPanel: document.getElementById("spectator-tiles-panel"),
   spectatorTiles: document.getElementById("spectator-tiles"),
   spectatorSortTiles: document.getElementById("spectator-sort-tiles"),
+  spectatorCount: document.getElementById("spectator-count"),
+  spectatorPresenceList: document.getElementById("spectator-presence-list"),
 };
 
 let audioContext = null;
@@ -353,6 +355,14 @@ function canFinishTurn() {
     && !state.roomState?.pending_acquire;
 }
 
+function boardRows() {
+  return state.roomState?.board_rows || DEFAULT_ROWS;
+}
+
+function boardColumns() {
+  return state.roomState?.board_columns || DEFAULT_COLUMNS;
+}
+
 function renderRack() {
   if (state.roomState?.is_spectator) {
     renderSpectatorCheckRack();
@@ -456,8 +466,8 @@ function renderBoard() {
     (state.roomState?.players || []).flatMap((player) => player.tiles || []).filter(Boolean),
   );
 
-  for (const row of ROWS) {
-    for (const column of COLUMNS) {
+  for (const row of boardRows()) {
+    for (const column of boardColumns()) {
       const tile = `${row}${column}`;
       const tileLabel = `${column}${row}`;
       const button = document.createElement("button");
@@ -587,6 +597,14 @@ function playRoomEventSounds(previousState, nextState) {
 function applyRoomState(nextState, fallbackMessage = "Connected.") {
   const previousState = state.roomState;
   state.roomState = nextState;
+  const columnCount = boardColumns().length;
+  document.documentElement.style.setProperty("--board-columns", String(columnCount));
+  document.documentElement.style.setProperty("--board-gap-count", String(columnCount - 1));
+  elements.gameModeBadge.textContent = (
+    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount}`
+  );
+  document.body.dataset.gameMode = nextState.game_mode || "classic";
+  document.title = `Acquire · ${nextState.game_mode_label || "Classic"}`;
   try {
     playRoomEventSounds(previousState, nextState);
   } catch (error) {
@@ -606,7 +624,7 @@ function displayTile(tile) {
 }
 
 function tileRackSortKey(tile) {
-  return [Number(tile.slice(1)), ROWS.indexOf(tile[0])];
+  return [Number(tile.slice(1)), boardRows().indexOf(tile[0])];
 }
 
 function compareTilesByRackOrder(left, right) {
@@ -642,11 +660,12 @@ function bankStockCell(stocks, companySizes, color) {
 
 function renderHoldings() {
   const players = state.roomState?.players || [];
+  const maxPlayers = state.roomState?.max_players || 5;
   const bankStocks = state.roomState?.bank?.stocks || {};
   const companySizes = state.roomState?.company_sizes || {};
   elements.holdingsBody.innerHTML = "";
 
-  for (let index = 0; index < MAX_PLAYERS; index += 1) {
+  for (let index = 0; index < maxPlayers; index += 1) {
     const player = players[index];
     const row = document.createElement("tr");
     const isCurrent = player?.id === state.roomState?.current_turn_player_id;
@@ -1104,6 +1123,7 @@ function renderCompanies() {
 
 function renderGame() {
   renderSpectatorMode();
+  renderSpectatorPresence();
   renderEnding();
   renderHoldings();
   renderBuying();
@@ -1113,6 +1133,16 @@ function renderGame() {
   renderActionPanels();
   renderRack();
   renderBoard();
+}
+
+function renderSpectatorPresence() {
+  const spectators = state.roomState?.spectators || [];
+  elements.spectatorCount.textContent = String(spectators.length);
+  elements.spectatorPresenceList.innerHTML = spectators.length
+    ? spectators
+      .map((name) => `<span class="spectator-presence-name">${escapeHtml(name)}</span>`)
+      .join("")
+    : '<span class="spectator-presence-empty">No spectators</span>';
 }
 
 function renderSpectatorMode() {
@@ -1165,6 +1195,8 @@ function subscribeToRoomState() {
     player_id: state.playerId,
   });
 }
+
+socket.on("connect", subscribeToRoomState);
 
 socket.on("room_state", (data) => {
   applyRoomState(data, "Connected.");
@@ -1374,7 +1406,6 @@ window.addEventListener("pointerdown", unlockAudio, { passive: true });
 window.addEventListener("keydown", unlockAudio);
 
 renderBoard();
-subscribeToRoomState();
 elements.placeButton.addEventListener("click", handlePlaceButton);
 elements.foundButton.addEventListener("click", handleFoundButton);
 elements.finishButton.addEventListener("click", handleFinishButton);

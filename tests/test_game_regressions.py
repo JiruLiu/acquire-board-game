@@ -5,11 +5,15 @@ from app import (
     Player,
     Room,
     app,
+    adjacent_tiles,
     build_public_room_state,
     game_end_condition,
     player_socket_room,
+    room_connected_sids,
     room_cleanup_timers,
+    room_tiles,
     rooms,
+    socket_membership,
     socketio,
 )
 
@@ -19,6 +23,8 @@ class GameRegressionTests(unittest.TestCase):
         for timer in room_cleanup_timers.values():
             timer.cancel()
         room_cleanup_timers.clear()
+        room_connected_sids.clear()
+        socket_membership.clear()
         rooms.clear()
         self.client = app.test_client()
 
@@ -26,20 +32,125 @@ class GameRegressionTests(unittest.TestCase):
         for timer in room_cleanup_timers.values():
             timer.cancel()
         room_cleanup_timers.clear()
+        room_connected_sids.clear()
+        socket_membership.clear()
         rooms.clear()
 
-    def make_room(self, room_id="TEST"):
+    def make_room(self, room_id="TEST", mode="classic"):
         player = Player(id="player-1", name="Player1", tiles=["I12"])
         room = Room(
             id=room_id,
             name=f"Room {room_id}",
             password="pw",
             creator_id=player.id,
+            mode=mode,
             players=[player],
             deck=["I11"],
         )
         rooms[room_id] = room
         return room, player
+
+    def test_expanded_mode_uses_11_by_14_board(self):
+        room, player = self.make_room(mode="expanded")
+        state = build_public_room_state(room, player.id)
+
+        self.assertEqual(state["game_mode"], "expanded")
+        self.assertEqual(state["game_mode_label"], "Expanded")
+        self.assertEqual(len(state["board_rows"]), 11)
+        self.assertEqual(len(state["board_columns"]), 14)
+        self.assertEqual(state["max_players"], 8)
+        self.assertEqual(len(room_tiles(room)), 154)
+        self.assertEqual(adjacent_tiles(room, "K14"), ["J14", "K13"])
+
+    def test_expanded_room_allows_eight_players_and_deals_from_larger_deck(self):
+        room, creator = self.make_room(mode="expanded")
+        room.players.extend(
+            Player(id=f"player-{index}", name=f"Player{index}")
+            for index in range(2, 9)
+        )
+
+        response = self.client.post(
+            "/api/rooms/TEST/start",
+            json={"player_id": creator.id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(room.players), 8)
+        self.assertTrue(all(len(player.tiles) == 6 for player in room.players))
+        self.assertEqual(len(room.deck), 154 - (8 * 6))
+
+    def test_room_capacity_depends_on_game_mode(self):
+        classic, _creator = self.make_room("CLASSIC", mode="classic")
+        classic.players.extend(
+            Player(id=f"classic-{index}", name=f"Classic{index}")
+            for index in range(2, 6)
+        )
+        expanded, _creator = self.make_room("EXPANDED", mode="expanded")
+        expanded.players.extend(
+            Player(id=f"expanded-{index}", name=f"Expand{index}")
+            for index in range(2, 9)
+        )
+
+        classic_response = self.client.post(
+            "/api/rooms/CLASSIC/join",
+            json={"player_name": "Extra", "room_password": "pw"},
+        )
+        expanded_response = self.client.post(
+            "/api/rooms/EXPANDED/join",
+            json={"player_name": "Extra", "room_password": "pw"},
+        )
+
+        self.assertEqual(classic_response.status_code, 400)
+        self.assertIn("limit is 5", classic_response.get_json()["error"])
+        self.assertEqual(expanded_response.status_code, 400)
+        self.assertIn("limit is 8", expanded_response.get_json()["error"])
+
+    def test_room_creation_validates_and_returns_game_mode(self):
+        response = self.client.post(
+            "/api/rooms",
+            json={
+                "player_name": "Creator",
+                "invitation_code": "evanston",
+                "room_password": "pw",
+                "game_mode": "expanded",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["state"]["game_mode"], "expanded")
+
+        invalid_response = self.client.post(
+            "/api/rooms",
+            json={
+                "player_name": "Other",
+                "invitation_code": "evanston",
+                "room_password": "pw",
+                "game_mode": "giant",
+            },
+        )
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertIn("Unknown game mode", invalid_response.get_json()["error"])
+
+    def test_expanded_coordinates_are_valid_only_in_expanded_mode(self):
+        classic, classic_player = self.make_room("CLASSIC", mode="classic")
+        classic.started = True
+        classic_player.tiles = ["K14"]
+        expanded, expanded_player = self.make_room("EXPANDED", mode="expanded")
+        expanded.started = True
+        expanded_player.tiles = ["K14"]
+
+        classic_response = self.client.post(
+            "/api/rooms/CLASSIC/place_tile",
+            json={"player_id": classic_player.id, "tile": "K14"},
+        )
+        expanded_response = self.client.post(
+            "/api/rooms/EXPANDED/place_tile",
+            json={"player_id": expanded_player.id, "tile": "K14"},
+        )
+
+        self.assertEqual(classic_response.status_code, 400)
+        self.assertEqual(expanded_response.status_code, 200)
+        self.assertIn("K14", expanded.board)
 
     def test_company_with_41_tiles_triggers_end_condition(self):
         room, _player = self.make_room()
@@ -84,6 +195,38 @@ class GameRegressionTests(unittest.TestCase):
         self.assertEqual(state["players"][0]["stocks"]["red"], 0)
         self.assertEqual(state["players"][0]["tiles"], ["I12"])
         self.assertIsNone(state["board"]["A1"]["company"])
+
+    def test_spectator_presence_tracks_live_socket_connection(self):
+        room, player = self.make_room()
+        response = self.client.post(
+            "/api/rooms/TEST/spectate",
+            json={"player_name": "Watcher", "room_password": "pw"},
+        )
+        spectator_id = response.get_json()["player_id"]
+        player_client = socketio.test_client(app)
+        spectator_client = socketio.test_client(app)
+
+        try:
+            player_client.emit(
+                "join_room_state",
+                {"room_id": room.id, "player_id": player.id},
+            )
+            spectator_client.emit(
+                "join_room_state",
+                {"room_id": room.id, "player_id": spectator_id},
+            )
+
+            connected_state = build_public_room_state(room, player.id)
+            self.assertEqual(connected_state["spectators"], ["Watcher"])
+
+            spectator_client.disconnect()
+            disconnected_state = build_public_room_state(room, player.id)
+            self.assertEqual(disconnected_state["spectators"], [])
+        finally:
+            if spectator_client.is_connected():
+                spectator_client.disconnect()
+            if player_client.is_connected():
+                player_client.disconnect()
 
     def test_fractional_stock_purchase_is_rejected_without_mutation(self):
         room, player = self.make_room()
@@ -158,32 +301,34 @@ class GameRegressionTests(unittest.TestCase):
         )
         rooms[second_room.id] = second_room
         client = socketio.test_client(app)
-        self.addCleanup(client.disconnect)
+        try:
+            client.emit(
+                "join_room_state",
+                {"room_id": first_room.id, "player_id": first_player.id},
+            )
+            client.get_received()
+            client.emit(
+                "join_room_state",
+                {"room_id": second_room.id, "player_id": second_player.id},
+            )
+            client.get_received()
 
-        client.emit(
-            "join_room_state",
-            {"room_id": first_room.id, "player_id": first_player.id},
-        )
-        client.get_received()
-        client.emit(
-            "join_room_state",
-            {"room_id": second_room.id, "player_id": second_player.id},
-        )
-        client.get_received()
+            socketio.emit(
+                "room_state",
+                {"room_id": first_room.id},
+                to=player_socket_room(first_room.id, first_player.id),
+            )
 
-        socketio.emit(
-            "room_state",
-            {"room_id": first_room.id},
-            to=player_socket_room(first_room.id, first_player.id),
-        )
-
-        old_room_updates = [
-            event
-            for event in client.get_received()
-            if event["name"] == "room_state"
-            and event["args"][0].get("room_id") == first_room.id
-        ]
-        self.assertEqual(old_room_updates, [])
+            old_room_updates = [
+                event
+                for event in client.get_received()
+                if event["name"] == "room_state"
+                and event["args"][0].get("room_id") == first_room.id
+            ]
+            self.assertEqual(old_room_updates, [])
+        finally:
+            if client.is_connected():
+                client.disconnect()
 
 
 if __name__ == "__main__":

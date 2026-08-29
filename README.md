@@ -18,11 +18,12 @@ Current features include:
 - list active rooms and the players waiting in each room
 - validate player names as 1-10 letters or numbers
 - prevent duplicate player names within a room
-- allow only 2-5 players in a room
+- offer Classic rooms for 2-5 players and Expanded rooms for 2-8 players
 - allow only the room creator to start the game
 - move players and waiting spectators to the board page after start
 - show all player tiles in a read-only spectator interface
-- place tiles on a 9x12 shared board
+- show a live list of connected spectators on the board page
+- place tiles on a 9x12 Classic board or an 11x14 Expanded board
 - push room updates instantly with WebSockets
 - found companies and expand company groups
 - buy up to 3 stocks after tile placement resolves
@@ -46,18 +47,21 @@ python app.py
 Then open:
 
 ```text
-http://127.0.0.1:5000
+http://127.0.0.1:5050
 ```
 
 ### Create a room
 
-Enter all three fields on the left side of the lobby:
+Enter the fields on the left side of the lobby:
 
 1. Your player name (1-10 letters or numbers)
 2. Invitation code: `evanston`
 3. A room password of your choice
+4. A game mode:
+   - **Classic**: 2-5 players on the original 9x12 board
+   - **Expanded**: 2-8 players on an 11x14 board
 
-Click **Create Room**. The new room appears under **Existing Rooms**. The creator cannot Join or Spectate their own room; after 2-5 players have joined, the creator clicks **Start Game**.
+Click **Create Room**. The new room appears under **Existing Rooms** with its mode, board size, and capacity. The creator cannot Join or Spectate their own room; after at least 2 players have joined, the creator clicks **Start Game**.
 
 ### Join a room
 

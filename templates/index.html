@@ -31,11 +31,19 @@
               <input id="room-password" type="password" placeholder="Required to create or enter a room" maxlength="24">
             </div>
 
+            <div class="field-row">
+              <label for="game-mode">Game mode</label>
+              <select id="game-mode">
+                <option value="classic">Classic · 2–5 players · 9×12 board</option>
+                <option value="expanded">Expanded · 2–8 players · 11×14 board</option>
+              </select>
+            </div>
+
             <div class="button-row room-create-row">
               <button id="create-room">Create Room</button>
             </div>
 
-            <p class="status" id="status">Enter your name, invitation code, and a room password to create a room.</p>
+            <p class="status" id="status">Enter your name, invitation code, room password, and game mode to create a room.</p>
           </section>
 
           <section class="room-section room-details-panel">
