@@ -10,7 +10,10 @@
     <main class="page">
       <section class="hero game-hero">
         <span id="action-prompt-left" class="action-prompt" hidden>Take your actions</span>
-        <h1>Acquire</h1>
+        <div class="game-title-block">
+          <h1>Acquire</h1>
+          <span id="game-mode-badge" class="game-mode-badge">Classic · 9×12</span>
+        </div>
         <span id="action-prompt-right" class="action-prompt" hidden>Take your actions</span>
       </section>
 
@@ -202,6 +205,15 @@
               <p class="small-label">Status</p>
               <button id="copy-link-button" class="copy-link-button" type="button">Copy Link</button>
               <button id="show-ending-button" class="show-ending-button" type="button" hidden>Final Scores</button>
+            </div>
+            <div class="spectator-presence" aria-live="polite">
+              <div class="spectator-presence-heading">
+                <span>Watching</span>
+                <span id="spectator-count" class="spectator-count">0</span>
+              </div>
+              <div id="spectator-presence-list" class="spectator-presence-list">
+                <span class="spectator-presence-empty">No spectators</span>
+              </div>
             </div>
             <p class="status" id="status">Connecting to room.</p>
           </section>

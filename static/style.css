@@ -28,8 +28,10 @@
   --buying-panel-top: calc(var(--board-shell-pad) + (4 * (var(--board-tile-size) + var(--board-gap))));
   --buying-panel-height: 7.42vw;
   --left-panel-gap: 0.55vw;
+  --board-columns: 12;
+  --board-gap-count: 11;
   --board-tile-size: calc(
-    (var(--board-shell-width) - (2 * var(--board-shell-pad)) - (11 * var(--board-gap)) - 2px) / 12
+    (var(--board-shell-width) - (2 * var(--board-shell-pad)) - (var(--board-gap-count) * var(--board-gap)) - 2px) / var(--board-columns)
   );
 }
 
@@ -80,6 +82,21 @@ body {
   justify-content: center;
   gap: 1.2vw;
   text-align: center;
+}
+
+.game-title-block {
+  display: grid;
+  justify-items: center;
+  gap: 0.16vw;
+}
+
+.game-mode-badge {
+  color: var(--accent);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.48vw;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .action-prompt {
@@ -370,16 +387,23 @@ h1 {
 }
 
 input,
+select,
 button {
   font: inherit;
 }
 
-input {
+input,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 0.65vw;
   padding: 0.65vw 0.75vw;
   background: rgba(255, 255, 255, 0.82);
+}
+
+select {
+  color: var(--ink);
+  cursor: pointer;
 }
 
 button {
@@ -527,7 +551,7 @@ button:disabled {
 
 .board {
   display: grid;
-  grid-template-columns: repeat(12, var(--board-tile-size));
+  grid-template-columns: repeat(var(--board-columns), var(--board-tile-size));
   gap: var(--board-gap);
   width: max-content;
   min-width: 0;
@@ -946,6 +970,65 @@ button:disabled {
 
 .status-heading .show-ending-button {
   justify-self: end;
+}
+
+.spectator-presence {
+  margin-top: 0.42vw;
+  padding: 0.38vw 0.45vw;
+  border: 1px solid rgba(31, 42, 47, 0.12);
+  border-radius: 0.42vw;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.spectator-presence-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.56vw;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.spectator-count {
+  display: inline-grid;
+  min-width: 1.1vw;
+  min-height: 1.1vw;
+  place-items: center;
+  border-radius: 999px;
+  color: white;
+  background: var(--accent);
+  font-size: 0.55vw;
+}
+
+.spectator-presence-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25vw;
+  max-height: 2.6vw;
+  margin-top: 0.3vw;
+  overflow-y: auto;
+}
+
+.spectator-presence-name,
+.spectator-presence-empty {
+  padding: 0.16vw 0.34vw;
+  border-radius: 999px;
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.62vw;
+}
+
+.spectator-presence-name {
+  color: var(--accent);
+  background: rgba(15, 108, 92, 0.12);
+  font-weight: 700;
+}
+
+.spectator-presence-empty {
+  padding-left: 0;
+  color: var(--muted);
 }
 
 .show-ending-button {
@@ -1922,7 +2005,7 @@ button:disabled {
     --rack-action-gap: 12px;
     --rack-sort-width: 52px;
     --finish-button-width: min(60vw, 220px);
-    --board-tile-size: calc((var(--board-shell-width) - (2 * var(--board-shell-pad)) - (11 * var(--board-gap)) - 2px) / 12);
+    --board-tile-size: calc((var(--board-shell-width) - (2 * var(--board-shell-pad)) - (var(--board-gap-count) * var(--board-gap)) - 2px) / var(--board-columns));
   }
 
   .game-layout {
@@ -1975,7 +2058,7 @@ button:disabled {
   }
 
   .board {
-    grid-template-columns: repeat(12, var(--board-tile-size));
+    grid-template-columns: repeat(var(--board-columns), var(--board-tile-size));
     gap: var(--board-gap);
   }
 
@@ -1995,6 +2078,14 @@ button:disabled {
 
   h1 {
     font-size: clamp(2rem, 7vw, 2.7rem);
+  }
+
+  .game-title-block {
+    gap: 3px;
+  }
+
+  .game-mode-badge {
+    font-size: clamp(0.55rem, 1.8vw, 0.72rem);
   }
 
   .small-label {
@@ -2054,6 +2145,30 @@ button:disabled {
     top: 12px;
     right: 12px;
     font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .spectator-presence {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 9px;
+  }
+
+  .spectator-presence-heading,
+  .spectator-count,
+  .spectator-presence-name,
+  .spectator-presence-empty {
+    font-size: clamp(0.65rem, 2vw, 0.8rem);
+  }
+
+  .spectator-count {
+    min-width: 22px;
+    min-height: 22px;
+  }
+
+  .spectator-presence-list {
+    gap: 5px;
+    max-height: 72px;
+    margin-top: 6px;
   }
 
   .buying-options {

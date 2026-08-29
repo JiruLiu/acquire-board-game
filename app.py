@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import copy
 import os
 import random
 import re
@@ -7,12 +10,28 @@ import uuid
 from dataclasses import dataclass, field
 
 from flask import Flask, jsonify, render_template, request
-from flask_socketio import SocketIO, join_room as socket_join_room
+from flask_socketio import SocketIO, join_room as socket_join_room, leave_room as socket_leave_room
 
 
-ROWS = list("ABCDEFGHI")
-COLUMNS = [str(i) for i in range(1, 13)]
+GAME_MODES = {
+    "classic": {
+        "label": "Classic",
+        "rows": list("ABCDEFGHI"),
+        "columns": [str(i) for i in range(1, 13)],
+        "max_players": 5,
+    },
+    "expanded": {
+        "label": "Expanded",
+        "rows": list("ABCDEFGHIJK"),
+        "columns": [str(i) for i in range(1, 15)],
+        "max_players": 8,
+    },
+}
+DEFAULT_GAME_MODE = "classic"
+ROWS = GAME_MODES[DEFAULT_GAME_MODE]["rows"]
+COLUMNS = GAME_MODES[DEFAULT_GAME_MODE]["columns"]
 ALL_TILES = [f"{row}{column}" for row in ROWS for column in COLUMNS]
+BOARD_ROW_ORDER = GAME_MODES["expanded"]["rows"]
 STOCK_COLORS = ["red", "yellow", "green", "pink", "purple", "orange", "blue"]
 STARTING_CASH = 6000
 STARTING_BANK_SHARES = 25
@@ -46,8 +65,10 @@ class Room:
     name: str
     password: str
     creator_id: str
+    mode: str = DEFAULT_GAME_MODE
     players: list[Player] = field(default_factory=list)
     spectator_ids: set[str] = field(default_factory=set)
+    spectator_names: dict[str, str] = field(default_factory=dict)
     started: bool = False
     current_turn: int = 0
     deck: list[str] = field(default_factory=list)
@@ -97,6 +118,26 @@ class RoomNotFoundError(ValueError):
     pass
 
 
+def game_mode_config(room: Room) -> dict:
+    return GAME_MODES.get(room.mode, GAME_MODES[DEFAULT_GAME_MODE])
+
+
+def room_rows(room: Room) -> list[str]:
+    return game_mode_config(room)["rows"]
+
+
+def room_columns(room: Room) -> list[str]:
+    return game_mode_config(room)["columns"]
+
+
+def room_tiles(room: Room) -> list[str]:
+    return [f"{row}{column}" for row in room_rows(room) for column in room_columns(room)]
+
+
+def room_max_players(room: Room) -> int:
+    return game_mode_config(room)["max_players"]
+
+
 def player_socket_room(room_id: str, player_id: str) -> str:
     return f"{room_id.upper()}:{player_id}"
 
@@ -119,6 +160,21 @@ def room_has_connected_player(room_id: str) -> bool:
     )
 
 
+def connected_spectator_names(room: Room) -> list[str]:
+    connected_ids = {
+        socket_membership.get(sid, (None, None))[1]
+        for sid in room_connected_sids.get(room.id, set())
+    }
+    return sorted(
+        (
+            room.spectator_names[spectator_id]
+            for spectator_id in room.spectator_ids & connected_ids
+            if spectator_id in room.spectator_names
+        ),
+        key=str.casefold,
+    )
+
+
 def schedule_room_cleanup(room_id: str) -> None:
     normalized_room_id = room_id.upper()
     cancel_room_cleanup(normalized_room_id)
@@ -137,14 +193,17 @@ def schedule_room_cleanup(room_id: str) -> None:
     timer.start()
 
 
-def detach_socket(sid: str) -> None:
+def detach_socket(sid: str, leave_socket_room: bool = False) -> None:
     membership = socket_membership.pop(sid, None)
     if not membership:
         return
 
     room_id, member_id = membership
+    if leave_socket_room:
+        socket_leave_room(player_socket_room(room_id, member_id), sid=sid)
     room = rooms.get(room_id)
     was_player = bool(room and any(player.id == member_id for player in room.players))
+    was_spectator = bool(room and member_id in room.spectator_ids)
     active_sids = room_connected_sids.get(room_id)
     if not active_sids:
         if was_player or room_id not in room_cleanup_timers:
@@ -152,6 +211,8 @@ def detach_socket(sid: str) -> None:
         return
 
     active_sids.discard(sid)
+    if was_spectator:
+        broadcast_room_state(room)
     if room_has_connected_player(room_id):
         return
     if not active_sids:
@@ -185,10 +246,17 @@ def broadcast_room_state(room: Room) -> None:
 
 def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
     is_spectator = bool(viewer_id and viewer_id in room.spectator_ids)
-    return {
+    mode = game_mode_config(room)
+    return copy.deepcopy({
         "room_id": room.id,
         "room_name": room.name,
+        "game_mode": room.mode,
+        "game_mode_label": mode["label"],
+        "board_rows": mode["rows"],
+        "board_columns": mode["columns"],
+        "max_players": mode["max_players"],
         "is_spectator": is_spectator,
+        "spectators": connected_spectator_names(room),
         "started": room.started,
         "current_turn_player_id": (
             room.players[room.current_turn].id if room.started and room.players else None
@@ -225,7 +293,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "deck_count": len(room.deck),
         "board": room.board,
         "viewer_id": viewer_id,
-    }
+    })
 
 
 def draw_tile(room: Room, player: Player, preserve_slot: bool = False) -> bool:
@@ -243,7 +311,7 @@ def draw_tile(room: Room, player: Player, preserve_slot: bool = False) -> bool:
 
 
 def tile_sort_key(tile: str) -> tuple[int, int]:
-    return ROWS.index(tile[0]), int(tile[1:])
+    return BOARD_ROW_ORDER.index(tile[0]), int(tile[1:])
 
 
 def display_tile(tile: str) -> str:
@@ -289,7 +357,7 @@ def tile_connects_super_company(room: Room, tile: str) -> bool:
     pending = [tile]
     while pending:
         current = pending.pop()
-        for neighbor in adjacent_tiles(current):
+        for neighbor in adjacent_tiles(room, current):
             if neighbor in connected or neighbor not in room.board:
                 continue
             if board_company(room.board[neighbor]):
@@ -299,7 +367,7 @@ def tile_connects_super_company(room: Room, tile: str) -> bool:
 
     connected_supers = set()
     for connected_tile in connected:
-        for neighbor in adjacent_tiles(connected_tile):
+        for neighbor in adjacent_tiles(room, connected_tile):
             if neighbor not in room.board:
                 continue
             company = board_company(room.board[neighbor])
@@ -311,7 +379,7 @@ def tile_connects_super_company(room: Room, tile: str) -> bool:
 def remove_invalid_tiles(room: Room) -> list[str]:
     invalid_tiles = {
         tile
-        for tile in ALL_TILES
+        for tile in room_tiles(room)
         if tile not in room.board and tile_connects_super_company(room, tile)
     }
     if not invalid_tiles:
@@ -354,7 +422,7 @@ def no_tiles_left_anywhere(room: Room) -> bool:
 
 def game_end_condition(room: Room) -> bool:
     return no_tiles_left_anywhere(room) or any(
-        size > GAME_END_COMPANY_SIZE for size in company_sizes(room).values()
+        size >= GAME_END_COMPANY_SIZE for size in company_sizes(room).values()
     )
 
 
@@ -750,7 +818,7 @@ def complete_acquire(room: Room) -> None:
 
 def adjacent_companies(room: Room, tile: str) -> set[str]:
     companies = set()
-    for neighbor in adjacent_tiles(tile):
+    for neighbor in adjacent_tiles(room, tile):
         if neighbor not in room.board:
             continue
         company = board_company(room.board[neighbor])
@@ -759,18 +827,20 @@ def adjacent_companies(room: Room, tile: str) -> set[str]:
     return companies
 
 
-def adjacent_tiles(tile: str) -> list[str]:
+def adjacent_tiles(room: Room, tile: str) -> list[str]:
     row = tile[0]
     column = int(tile[1:])
-    row_index = ROWS.index(row)
+    rows = room_rows(room)
+    columns = room_columns(room)
+    row_index = rows.index(row)
     candidates = []
     if row_index > 0:
-        candidates.append(f"{ROWS[row_index - 1]}{column}")
-    if row_index < len(ROWS) - 1:
-        candidates.append(f"{ROWS[row_index + 1]}{column}")
+        candidates.append(f"{rows[row_index - 1]}{column}")
+    if row_index < len(rows) - 1:
+        candidates.append(f"{rows[row_index + 1]}{column}")
     if column > 1:
         candidates.append(f"{row}{column - 1}")
-    if column < len(COLUMNS):
+    if column < len(columns):
         candidates.append(f"{row}{column + 1}")
     return candidates
 
@@ -785,7 +855,7 @@ def connected_colorless_tiles(room: Room, tile: str) -> list[str]:
     while pending:
         current = pending.pop()
         connected.append(current)
-        for neighbor in adjacent_tiles(current):
+        for neighbor in adjacent_tiles(room, current):
             if neighbor in seen or neighbor not in room.board:
                 continue
             if board_company(room.board[neighbor]):
@@ -828,6 +898,29 @@ def ensure_unique_player_name(room: Room, player_name: str) -> None:
         raise ValueError("That name is already taken in this room.")
 
 
+def request_data() -> dict:
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def string_value(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def parse_stock_count(value, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a whole number.")
+    if isinstance(value, int):
+        quantity = value
+    elif isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
+        quantity = int(value)
+    else:
+        raise ValueError(f"{field_name} must be a whole number.")
+    if quantity < 0:
+        raise ValueError(f"{field_name} cannot be negative.")
+    return quantity
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -843,7 +936,12 @@ def list_rooms():
                 "player_count": len(room.players),
                 "players": [player.name for player in room.players],
                 "creator_id": room.creator_id,
-                "max_players": 5,
+                "game_mode": room.mode,
+                "game_mode_label": game_mode_config(room)["label"],
+                "board_size": (
+                    f"{len(room_rows(room))}x{len(room_columns(room))}"
+                ),
+                "max_players": room_max_players(room),
                 "started": room.started,
             }
             for room in rooms.values()
@@ -865,23 +963,25 @@ def game_page(room_id: str):
 
 @socketio.on("join_room_state")
 def join_room_state(data):
-    room_id = (data.get("room_id") or "").upper()
-    player_id = data.get("player_id") or ""
+    if not isinstance(data, dict):
+        return
+    room_id = string_value(data.get("room_id")).upper()
+    player_id = string_value(data.get("player_id"))
     if room_id and player_id:
-        socket_join_room(player_socket_room(room_id, player_id))
         with room_lock:
-            detach_socket(request.sid)
+            detach_socket(request.sid, leave_socket_room=True)
+            room = rooms.get(room_id)
+            if not room:
+                return
+            is_player = any(player.id == player_id for player in room.players)
+            if not is_player and player_id not in room.spectator_ids:
+                return
+            socket_join_room(player_socket_room(room_id, player_id))
             socket_membership[request.sid] = (room_id, player_id)
             room_connected_sids.setdefault(room_id, set()).add(request.sid)
-            room = rooms.get(room_id)
-            if room:
-                if any(player.id == player_id for player in room.players):
-                    cancel_room_cleanup(room_id)
-                socketio.emit(
-                    "room_state",
-                    build_public_room_state(room, player_id),
-                    to=request.sid,
-                )
+            if is_player:
+                cancel_room_cleanup(room_id)
+            broadcast_room_state(room)
 
 
 @socketio.on("disconnect")
@@ -893,10 +993,11 @@ def handle_disconnect():
 @app.post("/api/rooms")
 def create_room():
     global next_room_number
-    data = request.get_json(silent=True) or {}
-    player_name = (data.get("player_name") or "").strip()
-    invitation_code = (data.get("invitation_code") or "").strip().lower()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    player_name = string_value(data.get("player_name")).strip()
+    invitation_code = string_value(data.get("invitation_code")).strip().lower()
+    room_password = string_value(data.get("room_password")).strip()
+    game_mode = string_value(data.get("game_mode")).strip().lower() or DEFAULT_GAME_MODE
 
     with room_lock:
         try:
@@ -905,6 +1006,8 @@ def create_room():
                 raise ValueError("Invalid invitation code.")
             if not ROOM_PASSWORD_PATTERN.fullmatch(room_password):
                 raise ValueError("Room password must be 1-24 characters.")
+            if game_mode not in GAME_MODES:
+                raise ValueError("Unknown game mode.")
             room_id = new_room_id()
             player = Player(id=uuid.uuid4().hex, name=player_name)
             room = Room(
@@ -912,6 +1015,7 @@ def create_room():
                 name=f"Room {next_room_number}",
                 password=room_password,
                 creator_id=player.id,
+                mode=game_mode,
                 players=[player],
                 last_action=f"{player_name} created the room.",
             )
@@ -932,9 +1036,9 @@ def create_room():
 
 @app.post("/api/rooms/<room_id>/join")
 def join_room(room_id: str):
-    data = request.get_json(silent=True) or {}
-    player_name = (data.get("player_name") or "").strip()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    player_name = string_value(data.get("player_name")).strip()
+    room_password = string_value(data.get("room_password")).strip()
 
     try:
         with room_lock:
@@ -944,8 +1048,11 @@ def join_room(room_id: str):
                 return jsonify({"error": "Incorrect room password."}), 403
             if room.started:
                 return jsonify({"error": "The game has already started."}), 400
-            if len(room.players) >= 5:
-                return jsonify({"error": "This room is full. The limit is 5 players."}), 400
+            max_players = room_max_players(room)
+            if len(room.players) >= max_players:
+                return jsonify({
+                    "error": f"This room is full. The limit is {max_players} players."
+                }), 400
             ensure_unique_player_name(room, player_name)
 
             player = Player(id=uuid.uuid4().hex, name=player_name)
@@ -963,9 +1070,9 @@ def join_room(room_id: str):
 
 @app.post("/api/rooms/<room_id>/spectate")
 def spectate_room(room_id: str):
-    data = request.get_json(silent=True) or {}
-    spectator_name = (data.get("player_name") or "").strip()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    spectator_name = string_value(data.get("player_name")).strip()
+    room_password = string_value(data.get("room_password")).strip()
 
     try:
         with room_lock:
@@ -975,9 +1082,12 @@ def spectate_room(room_id: str):
                 return jsonify({"error": "Incorrect room password."}), 403
             spectator_id = f"spectator-{uuid.uuid4().hex}"
             room.spectator_ids.add(spectator_id)
+            room.spectator_names[spectator_id] = spectator_name
             state = build_public_room_state(room, spectator_id)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(
         {"room_id": room.id, "player_id": spectator_id, "state": state}
@@ -999,7 +1109,7 @@ def room_state(room_id: str):
 
 @app.post("/api/rooms/<room_id>/start")
 def start_room(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
 
     try:
@@ -1009,8 +1119,12 @@ def start_room(room_id: str):
                 return jsonify({"error": "The game is already running."}), 400
             if room.creator_id != player_id:
                 return jsonify({"error": "Only the room creator can start the game."}), 403
-            if len(room.players) < 2 or len(room.players) > 5:
-                return jsonify({"error": "A game must have 2-5 players."}), 400
+            max_players = room_max_players(room)
+            if len(room.players) < 2 or len(room.players) > max_players:
+                return jsonify({
+                    "error": f"A {game_mode_config(room)['label']} game must have "
+                    f"2-{max_players} players."
+                }), 400
             lowered_names = [player.name.lower() for player in room.players]
             if len(lowered_names) != len(set(lowered_names)):
                 return jsonify({"error": "Duplicate player names are not allowed."}), 400
@@ -1021,7 +1135,7 @@ def start_room(room_id: str):
                 room.players.append(room.players.pop(0))
 
             room.started = True
-            room.deck = ALL_TILES[:]
+            room.deck = room_tiles(room)
             random.shuffle(room.deck)
             room.board = {}
             room.companies_found = {color: False for color in STOCK_COLORS}
@@ -1059,7 +1173,7 @@ def start_room(room_id: str):
 
 
 def rack_sort_key(tile: str) -> tuple[int, int]:
-    return int(tile[1:]), ROWS.index(tile[0])
+    return int(tile[1:]), BOARD_ROW_ORDER.index(tile[0])
 
 
 def process_stock_purchases(
@@ -1085,12 +1199,7 @@ def process_stock_purchases(
     for color, quantity in purchases.items():
         if color not in STOCK_COLORS:
             raise ValueError("Unknown company color.")
-        try:
-            quantity = int(quantity)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Stock quantity must be a number.") from exc
-        if quantity < 0:
-            raise ValueError("Stock quantity cannot be negative.")
+        quantity = parse_stock_count(quantity, "Stock quantity")
         if quantity:
             clean_purchases[color] = quantity
 
@@ -1123,7 +1232,7 @@ def process_stock_purchases(
 
 @app.post("/api/rooms/<room_id>/sort_tiles")
 def sort_tiles(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
 
     try:
@@ -1145,7 +1254,7 @@ def sort_tiles(room_id: str):
 
 @app.post("/api/rooms/<room_id>/buy_stocks")
 def buy_stocks(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     purchases = data.get("purchases") or {}
 
@@ -1183,16 +1292,15 @@ def buy_stocks(room_id: str):
 
 @app.post("/api/rooms/<room_id>/place_tile")
 def place_tile(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    tile = (data.get("tile") or "").upper()
-
-    if tile not in ALL_TILES:
-        return jsonify({"error": "Unknown tile."}), 400
+    tile = string_value(data.get("tile")).upper()
 
     try:
         with room_lock:
             room = get_room_or_404(room_id)
+            if tile not in room_tiles(room):
+                return jsonify({"error": "Unknown tile."}), 400
             if not room.started:
                 return jsonify({"error": "The game has not started yet."}), 400
             if room.game_over:
@@ -1352,9 +1460,9 @@ def place_tile(room_id: str):
 
 @app.post("/api/rooms/<room_id>/found_company")
 def found_company(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    color = (data.get("color") or "").lower()
+    color = string_value(data.get("color")).lower()
 
     if color and color not in STOCK_COLORS:
         return jsonify({"error": "Unknown company color."}), 400
@@ -1416,9 +1524,9 @@ def found_company(room_id: str):
 
 @app.post("/api/rooms/<room_id>/set_acquire_survivor")
 def set_acquire_survivor(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    survivor = (data.get("survivor") or "").lower()
+    survivor = string_value(data.get("survivor")).lower()
 
     try:
         with room_lock:
@@ -1480,9 +1588,12 @@ def set_acquire_survivor(room_id: str):
 
 @app.post("/api/rooms/<room_id>/set_acquire_order")
 def set_acquire_order(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     order = data.get("order") or []
+
+    if not isinstance(order, list) or not all(isinstance(color, str) for color in order):
+        return jsonify({"error": "Acquire order must be a list of company colors."}), 400
 
     try:
         with room_lock:
@@ -1527,13 +1638,13 @@ def set_acquire_order(room_id: str):
 
 @app.post("/api/rooms/<room_id>/trade_stocks")
 def trade_stocks(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    target = (data.get("target") or "").lower()
+    target = string_value(data.get("target")).lower()
 
     try:
-        sell_count = int(data.get("sell") or 0)
-        trade_count = int(data.get("trade") or 0)
+        sell_count = parse_stock_count(data.get("sell", 0), "Sell count")
+        trade_count = parse_stock_count(data.get("trade", 0), "Trade count")
         with room_lock:
             room = get_room_or_404(room_id)
             if room.game_over:
@@ -1597,15 +1708,15 @@ def trade_stocks(room_id: str):
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
-    except (TypeError, ValueError):
-        return jsonify({"error": "Stock counts must be numbers."}), 400
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(state)
 
 
 @app.post("/api/rooms/<room_id>/finish_turn")
 def finish_turn(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     purchases = data.get("purchases") or {}
 
@@ -1703,5 +1814,5 @@ def finish_turn(room_id: str):
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "5000"))
+    port = int(os.environ.get("PORT", "5050"))
     socketio.run(app, host="0.0.0.0", port=port, debug=True, allow_unsafe_werkzeug=True)
