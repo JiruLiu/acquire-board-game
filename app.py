@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import copy
 import os
 import random
 import re
@@ -7,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 
 from flask import Flask, jsonify, render_template, request
-from flask_socketio import SocketIO, join_room as socket_join_room
+from flask_socketio import SocketIO, join_room as socket_join_room, leave_room as socket_leave_room
 
 
 ROWS = list("ABCDEFGHI")
@@ -137,12 +140,14 @@ def schedule_room_cleanup(room_id: str) -> None:
     timer.start()
 
 
-def detach_socket(sid: str) -> None:
+def detach_socket(sid: str, leave_socket_room: bool = False) -> None:
     membership = socket_membership.pop(sid, None)
     if not membership:
         return
 
     room_id, member_id = membership
+    if leave_socket_room:
+        socket_leave_room(player_socket_room(room_id, member_id), sid=sid)
     room = rooms.get(room_id)
     was_player = bool(room and any(player.id == member_id for player in room.players))
     active_sids = room_connected_sids.get(room_id)
@@ -185,7 +190,7 @@ def broadcast_room_state(room: Room) -> None:
 
 def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
     is_spectator = bool(viewer_id and viewer_id in room.spectator_ids)
-    return {
+    return copy.deepcopy({
         "room_id": room.id,
         "room_name": room.name,
         "is_spectator": is_spectator,
@@ -225,7 +230,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "deck_count": len(room.deck),
         "board": room.board,
         "viewer_id": viewer_id,
-    }
+    })
 
 
 def draw_tile(room: Room, player: Player, preserve_slot: bool = False) -> bool:
@@ -354,7 +359,7 @@ def no_tiles_left_anywhere(room: Room) -> bool:
 
 def game_end_condition(room: Room) -> bool:
     return no_tiles_left_anywhere(room) or any(
-        size > GAME_END_COMPANY_SIZE for size in company_sizes(room).values()
+        size >= GAME_END_COMPANY_SIZE for size in company_sizes(room).values()
     )
 
 
@@ -828,6 +833,29 @@ def ensure_unique_player_name(room: Room, player_name: str) -> None:
         raise ValueError("That name is already taken in this room.")
 
 
+def request_data() -> dict:
+    data = request.get_json(silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def string_value(value) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def parse_stock_count(value, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be a whole number.")
+    if isinstance(value, int):
+        quantity = value
+    elif isinstance(value, str) and re.fullmatch(r"\d+", value.strip()):
+        quantity = int(value)
+    else:
+        raise ValueError(f"{field_name} must be a whole number.")
+    if quantity < 0:
+        raise ValueError(f"{field_name} cannot be negative.")
+    return quantity
+
+
 @app.get("/")
 def index():
     return render_template("index.html")
@@ -865,12 +893,14 @@ def game_page(room_id: str):
 
 @socketio.on("join_room_state")
 def join_room_state(data):
-    room_id = (data.get("room_id") or "").upper()
-    player_id = data.get("player_id") or ""
+    if not isinstance(data, dict):
+        return
+    room_id = string_value(data.get("room_id")).upper()
+    player_id = string_value(data.get("player_id"))
     if room_id and player_id:
-        socket_join_room(player_socket_room(room_id, player_id))
         with room_lock:
-            detach_socket(request.sid)
+            detach_socket(request.sid, leave_socket_room=True)
+            socket_join_room(player_socket_room(room_id, player_id))
             socket_membership[request.sid] = (room_id, player_id)
             room_connected_sids.setdefault(room_id, set()).add(request.sid)
             room = rooms.get(room_id)
@@ -893,10 +923,10 @@ def handle_disconnect():
 @app.post("/api/rooms")
 def create_room():
     global next_room_number
-    data = request.get_json(silent=True) or {}
-    player_name = (data.get("player_name") or "").strip()
-    invitation_code = (data.get("invitation_code") or "").strip().lower()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    player_name = string_value(data.get("player_name")).strip()
+    invitation_code = string_value(data.get("invitation_code")).strip().lower()
+    room_password = string_value(data.get("room_password")).strip()
 
     with room_lock:
         try:
@@ -932,9 +962,9 @@ def create_room():
 
 @app.post("/api/rooms/<room_id>/join")
 def join_room(room_id: str):
-    data = request.get_json(silent=True) or {}
-    player_name = (data.get("player_name") or "").strip()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    player_name = string_value(data.get("player_name")).strip()
+    room_password = string_value(data.get("room_password")).strip()
 
     try:
         with room_lock:
@@ -963,9 +993,9 @@ def join_room(room_id: str):
 
 @app.post("/api/rooms/<room_id>/spectate")
 def spectate_room(room_id: str):
-    data = request.get_json(silent=True) or {}
-    spectator_name = (data.get("player_name") or "").strip()
-    room_password = (data.get("room_password") or "").strip()
+    data = request_data()
+    spectator_name = string_value(data.get("player_name")).strip()
+    room_password = string_value(data.get("room_password")).strip()
 
     try:
         with room_lock:
@@ -978,6 +1008,8 @@ def spectate_room(room_id: str):
             state = build_public_room_state(room, spectator_id)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(
         {"room_id": room.id, "player_id": spectator_id, "state": state}
@@ -999,7 +1031,7 @@ def room_state(room_id: str):
 
 @app.post("/api/rooms/<room_id>/start")
 def start_room(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
 
     try:
@@ -1085,12 +1117,7 @@ def process_stock_purchases(
     for color, quantity in purchases.items():
         if color not in STOCK_COLORS:
             raise ValueError("Unknown company color.")
-        try:
-            quantity = int(quantity)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("Stock quantity must be a number.") from exc
-        if quantity < 0:
-            raise ValueError("Stock quantity cannot be negative.")
+        quantity = parse_stock_count(quantity, "Stock quantity")
         if quantity:
             clean_purchases[color] = quantity
 
@@ -1123,7 +1150,7 @@ def process_stock_purchases(
 
 @app.post("/api/rooms/<room_id>/sort_tiles")
 def sort_tiles(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
 
     try:
@@ -1145,7 +1172,7 @@ def sort_tiles(room_id: str):
 
 @app.post("/api/rooms/<room_id>/buy_stocks")
 def buy_stocks(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     purchases = data.get("purchases") or {}
 
@@ -1183,9 +1210,9 @@ def buy_stocks(room_id: str):
 
 @app.post("/api/rooms/<room_id>/place_tile")
 def place_tile(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    tile = (data.get("tile") or "").upper()
+    tile = string_value(data.get("tile")).upper()
 
     if tile not in ALL_TILES:
         return jsonify({"error": "Unknown tile."}), 400
@@ -1352,9 +1379,9 @@ def place_tile(room_id: str):
 
 @app.post("/api/rooms/<room_id>/found_company")
 def found_company(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    color = (data.get("color") or "").lower()
+    color = string_value(data.get("color")).lower()
 
     if color and color not in STOCK_COLORS:
         return jsonify({"error": "Unknown company color."}), 400
@@ -1416,9 +1443,9 @@ def found_company(room_id: str):
 
 @app.post("/api/rooms/<room_id>/set_acquire_survivor")
 def set_acquire_survivor(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    survivor = (data.get("survivor") or "").lower()
+    survivor = string_value(data.get("survivor")).lower()
 
     try:
         with room_lock:
@@ -1480,9 +1507,12 @@ def set_acquire_survivor(room_id: str):
 
 @app.post("/api/rooms/<room_id>/set_acquire_order")
 def set_acquire_order(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     order = data.get("order") or []
+
+    if not isinstance(order, list) or not all(isinstance(color, str) for color in order):
+        return jsonify({"error": "Acquire order must be a list of company colors."}), 400
 
     try:
         with room_lock:
@@ -1527,13 +1557,13 @@ def set_acquire_order(room_id: str):
 
 @app.post("/api/rooms/<room_id>/trade_stocks")
 def trade_stocks(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
-    target = (data.get("target") or "").lower()
+    target = string_value(data.get("target")).lower()
 
     try:
-        sell_count = int(data.get("sell") or 0)
-        trade_count = int(data.get("trade") or 0)
+        sell_count = parse_stock_count(data.get("sell", 0), "Sell count")
+        trade_count = parse_stock_count(data.get("trade", 0), "Trade count")
         with room_lock:
             room = get_room_or_404(room_id)
             if room.game_over:
@@ -1597,15 +1627,15 @@ def trade_stocks(room_id: str):
             broadcast_room_state(room)
     except RoomNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
-    except (TypeError, ValueError):
-        return jsonify({"error": "Stock counts must be numbers."}), 400
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return jsonify(state)
 
 
 @app.post("/api/rooms/<room_id>/finish_turn")
 def finish_turn(room_id: str):
-    data = request.get_json(silent=True) or {}
+    data = request_data()
     player_id = data.get("player_id")
     purchases = data.get("purchases") or {}
 

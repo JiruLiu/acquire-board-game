@@ -135,6 +135,7 @@ async function createRoom() {
     state.roomId = data.room_id;
     state.playerId = data.player_id;
     state.roomState = data.state;
+    state.roomEntryLocked = true;
     elements.roomPassword.value = roomPassword;
     setStatus(`${state.roomState.room_name} created.`);
     subscribeToRoomState();
