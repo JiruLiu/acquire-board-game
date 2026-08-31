@@ -17,6 +17,16 @@
         <span id="action-prompt-right" class="action-prompt" hidden>Take your actions</span>
       </section>
 
+      <section id="replay-controls" class="panel replay-controls" hidden>
+        <a class="replay-lobby-link" href="/">Lobby</a>
+        <button id="replay-previous" class="replay-arrow" type="button" aria-label="Previous replay action">←</button>
+        <div class="replay-progress" aria-live="polite">
+          <strong id="replay-position">Action 1 of 1</strong>
+          <span id="replay-event">Game started</span>
+        </div>
+        <button id="replay-next" class="replay-arrow" type="button" aria-label="Next replay action">→</button>
+      </section>
+
       <section class="game-layout">
         <aside class="game-sidebar">
           <section id="spectator-tiles-panel" class="panel spectator-tiles-panel" hidden>
@@ -232,8 +242,9 @@
 
     <script>
       window.GAME_BOOTSTRAP = {
-        roomId: "{{ room_id }}",
-        playerId: "{{ player_id }}",
+        roomId: {{ room_id | tojson }},
+        playerId: {{ player_id | tojson }},
+        replayId: {{ replay_id | tojson }},
       };
     </script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>

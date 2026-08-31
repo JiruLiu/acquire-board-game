@@ -16,9 +16,11 @@ const elements = {
   inviteCode: document.getElementById("invite-code"),
   roomPassword: document.getElementById("room-password"),
   gameMode: document.getElementById("game-mode"),
+  gameSeed: document.getElementById("game-seed"),
   status: document.getElementById("status"),
   createRoom: document.getElementById("create-room"),
   availableRooms: document.getElementById("available-rooms"),
+  recentReplays: document.getElementById("recent-replays"),
   refreshRooms: document.getElementById("refresh-rooms"),
 };
 
@@ -38,6 +40,7 @@ function getInviteCode() {
 function setRoomEntryControlsDisabled(disabled) {
   elements.createRoom.disabled = disabled;
   elements.gameMode.disabled = disabled;
+  elements.gameSeed.disabled = disabled;
   for (const control of elements.availableRooms.querySelectorAll("button, input")) {
     control.disabled = disabled;
   }
@@ -78,7 +81,7 @@ async function loadRooms() {
         <div class="available-room-summary">
           <strong>${room.name}</strong>
           <span class="room-player-names">${room.players.join(", ") || "No players"}</span>
-          <span>${room.game_mode_label} · ${room.board_size} · ${room.player_count}/${room.max_players}</span>
+          <span>${room.game_mode_label} · ${room.board_size} · ${room.player_count}/${room.max_players} · Seed ${room.seed}</span>
           <span>${room.started ? "Game in progress" : "Waiting to start"}</span>
         </div>
         <input class="room-card-password" type="password" placeholder="Room password" maxlength="24" aria-label="Password for ${room.name}" ${roomEntryDisabled ? "disabled" : ""}>
@@ -97,6 +100,55 @@ async function loadRooms() {
     elements.createRoom.disabled = state.roomEntryPending || state.roomEntryLocked;
   } catch (error) {
     setStatus(error.message, true);
+  }
+}
+
+function formatReplayTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+async function loadReplays() {
+  try {
+    const data = await api("/api/replays");
+    elements.recentReplays.innerHTML = "";
+    if (!data.replays.length) {
+      elements.recentReplays.innerHTML = '<p class="panel-note">No recorded games yet.</p>';
+      return;
+    }
+
+    for (const replay of data.replays) {
+      const card = document.createElement("article");
+      card.className = "recent-replay-card";
+
+      const summary = document.createElement("div");
+      summary.className = "recent-replay-summary";
+      const title = document.createElement("strong");
+      title.textContent = replay.room_name;
+      const details = document.createElement("span");
+      details.textContent = `${replay.game_mode_label} · ${replay.action_count} actions · Seed ${replay.seed}`;
+      const timing = document.createElement("span");
+      timing.textContent = `${replay.status === "completed" ? "Completed" : "In progress"} · ${formatReplayTime(replay.updated_at)}`;
+      summary.append(title, details, timing);
+
+      const link = document.createElement("a");
+      link.className = "replay-open-button";
+      link.href = `/replay/${encodeURIComponent(replay.recording_id)}`;
+      link.textContent = "Replay";
+      link.setAttribute("aria-label", `Replay ${replay.room_name}`);
+
+      card.append(summary, link);
+      elements.recentReplays.appendChild(card);
+    }
+  } catch (error) {
+    elements.recentReplays.innerHTML = '<p class="panel-note">Replays are temporarily unavailable.</p>';
   }
 }
 
@@ -123,6 +175,7 @@ async function createRoom() {
   const invitationCode = getInviteCode();
   const roomPassword = elements.roomPassword.value.trim();
   const gameMode = elements.gameMode.value;
+  const seed = elements.gameSeed.value.trim();
 
   try {
     validateNameOrThrow(playerName);
@@ -137,6 +190,7 @@ async function createRoom() {
         invitation_code: invitationCode,
         room_password: roomPassword,
         game_mode: gameMode,
+        seed,
       }),
     });
     state.roomId = data.room_id;
@@ -144,6 +198,7 @@ async function createRoom() {
     state.roomState = data.state;
     state.roomEntryLocked = true;
     elements.gameMode.disabled = true;
+    elements.gameSeed.disabled = true;
     elements.roomPassword.value = roomPassword;
     setStatus(`${state.roomState.room_name} created.`);
     subscribeToRoomState();
@@ -211,5 +266,9 @@ socket.on("room_state", (data) => {
 });
 
 elements.createRoom.addEventListener("click", createRoom);
-elements.refreshRooms.addEventListener("click", loadRooms);
+elements.refreshRooms.addEventListener("click", () => {
+  loadRooms();
+  loadReplays();
+});
 loadRooms();
+loadReplays();

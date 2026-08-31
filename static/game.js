@@ -1,10 +1,12 @@
 const DEFAULT_ROWS = "ABCDEFGHI".split("");
 const DEFAULT_COLUMNS = Array.from({ length: 12 }, (_, index) => String(index + 1));
 const STOCK_COLORS = ["red", "yellow", "green", "pink", "purple", "orange", "blue"];
+const isReplay = Boolean(window.GAME_BOOTSTRAP.replayId);
 
 const state = {
   roomId: window.GAME_BOOTSTRAP.roomId,
   playerId: window.GAME_BOOTSTRAP.playerId,
+  replayId: window.GAME_BOOTSTRAP.replayId,
   roomState: null,
   selectedTile: null,
   selectedCompany: null,
@@ -17,9 +19,15 @@ const state = {
   endingClosed: false,
   spectatorTilesSorted: false,
   spectatorCheckedTile: null,
+  spectatorHoveredPlayerId: null,
+  replayGame: null,
+  replayActions: [],
+  replayIndex: 0,
+  replayLoading: false,
+  replayCache: new Map(),
 };
 
-const socket = io();
+const socket = isReplay ? null : io();
 
 const elements = {
   status: document.getElementById("status"),
@@ -73,6 +81,11 @@ const elements = {
   spectatorSortTiles: document.getElementById("spectator-sort-tiles"),
   spectatorCount: document.getElementById("spectator-count"),
   spectatorPresenceList: document.getElementById("spectator-presence-list"),
+  replayControls: document.getElementById("replay-controls"),
+  replayPrevious: document.getElementById("replay-previous"),
+  replayNext: document.getElementById("replay-next"),
+  replayPosition: document.getElementById("replay-position"),
+  replayEvent: document.getElementById("replay-event"),
 };
 
 let audioContext = null;
@@ -337,6 +350,118 @@ async function api(path, options = {}) {
   return data;
 }
 
+function replayEventLabel(eventType) {
+  if (!eventType) return "Recorded action";
+  return eventType
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function replayStatusHistoryAt(index) {
+  const history = [];
+  for (const action of state.replayActions.slice(0, index + 1)) {
+    if (action.message && history[history.length - 1] !== action.message) {
+      history.push(action.message);
+    }
+  }
+  return history;
+}
+
+function renderReplayControls() {
+  elements.replayControls.hidden = !isReplay;
+  if (!isReplay) return;
+  const action = state.replayActions[state.replayIndex];
+  const total = state.replayActions.length;
+  elements.replayPosition.textContent = total
+    ? `Action ${state.replayIndex + 1} of ${total}`
+    : "Replay unavailable";
+  const isFinished = Boolean(state.roomState?.game_over)
+    && state.replayIndex === total - 1;
+  elements.replayEvent.textContent = action
+    ? `${replayEventLabel(action.event_type)}${isFinished ? " · Game over" : ""}`
+    : "No recorded actions";
+  elements.replayPrevious.disabled = state.replayLoading || state.replayIndex <= 0;
+  elements.replayNext.disabled = state.replayLoading
+    || !total
+    || state.replayIndex >= total - 1;
+}
+
+async function prefetchReplaySnapshot(index) {
+  const action = state.replayActions[index];
+  if (!action || state.replayCache.has(action.sequence)) return;
+  try {
+    const data = await api(
+      `/api/replays/${encodeURIComponent(state.replayId)}/snapshots/${action.sequence}`,
+    );
+    state.replayCache.set(action.sequence, data);
+  } catch (_error) {
+    // Navigation will surface the error if this action is requested.
+  }
+}
+
+async function loadReplaySnapshot(index) {
+  const action = state.replayActions[index];
+  if (!action || state.replayLoading) return;
+  state.replayLoading = true;
+  renderReplayControls();
+  try {
+    let data = state.replayCache.get(action.sequence);
+    if (!data) {
+      data = await api(
+        `/api/replays/${encodeURIComponent(state.replayId)}/snapshots/${action.sequence}`,
+      );
+      state.replayCache.set(action.sequence, data);
+    }
+    state.replayIndex = index;
+    state.replayGame = data.game;
+    state.endingClosed = false;
+    state.selectedTile = null;
+    state.spectatorCheckedTile = null;
+    state.spectatorHoveredPlayerId = null;
+    applyRoomState(data.state, replayEventLabel(action.event_type));
+    prefetchReplaySnapshot(index + 1);
+    prefetchReplaySnapshot(index - 1);
+  } catch (error) {
+    setStatus(error.message, true);
+  } finally {
+    state.replayLoading = false;
+    renderReplayControls();
+  }
+}
+
+async function loadReplay() {
+  document.body.classList.add("replay-mode", "spectator-mode");
+  elements.replayControls.hidden = false;
+  try {
+    const data = await api(`/api/replays/${encodeURIComponent(state.replayId)}`);
+    state.replayGame = data.game;
+    state.replayActions = data.actions;
+    if (!state.replayActions.length) {
+      throw new Error("This replay has no recorded actions.");
+    }
+    await loadReplaySnapshot(0);
+  } catch (error) {
+    setStatus(error.message, true);
+    state.replayActions = [];
+    renderReplayControls();
+  }
+}
+
+function handleReplayKeydown(event) {
+  if (!isReplay || state.replayLoading || event.defaultPrevented) return;
+  const tagName = event.target?.tagName;
+  if (tagName === "INPUT" || tagName === "SELECT" || tagName === "TEXTAREA") return;
+  if (event.key === "ArrowLeft" && state.replayIndex > 0) {
+    event.preventDefault();
+    loadReplaySnapshot(state.replayIndex - 1);
+  }
+  if (event.key === "ArrowRight" && state.replayIndex < state.replayActions.length - 1) {
+    event.preventDefault();
+    loadReplaySnapshot(state.replayIndex + 1);
+  }
+}
+
 function canPlaceTile(tile) {
   if (!tile) return false;
   if (!state.roomState?.started) return false;
@@ -462,6 +587,10 @@ function renderBoard() {
   elements.board.innerHTML = "";
   const boardData = state.roomState?.board || {};
   const lastPlacedTile = state.roomState?.last_placed_tile;
+  const hoveredPlayer = state.roomState?.is_spectator
+    ? state.roomState.players?.find((player) => player.id === state.spectatorHoveredPlayerId)
+    : null;
+  const hoveredPlayerTiles = new Set((hoveredPlayer?.tiles || []).filter(Boolean));
   const ownedTiles = new Set(
     (state.roomState?.players || []).flatMap((player) => player.tiles || []).filter(Boolean),
   );
@@ -478,6 +607,9 @@ function renderBoard() {
       }
       if (tile === state.spectatorCheckedTile) {
         button.classList.add("checked-owned-tile");
+      }
+      if (hoveredPlayerTiles.has(tile)) {
+        button.classList.add("spectator-player-tile-highlight");
       }
 
       const boardEntry = boardData[tile];
@@ -496,8 +628,8 @@ function renderBoard() {
               : "last-placed-standard",
           );
         }
-        const ownerMarkup = tile === lastPlacedTile
-          ? `<span class="owner">${placedBy.slice(0, 4)}</span>`
+        const ownerMarkup = tile === lastPlacedTile && placedBy
+          ? `<span class="owner">${String(placedBy).slice(0, 4)}</span>`
           : "";
         button.innerHTML = `<span class="coord">${tileLabel}</span>${ownerMarkup}`;
       } else {
@@ -601,15 +733,18 @@ function applyRoomState(nextState, fallbackMessage = "Connected.") {
   document.documentElement.style.setProperty("--board-columns", String(columnCount));
   document.documentElement.style.setProperty("--board-gap-count", String(columnCount - 1));
   elements.gameModeBadge.textContent = (
-    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount}`
+    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount} · Seed ${nextState.seed}`
   );
   document.body.dataset.gameMode = nextState.game_mode || "classic";
-  document.title = `Acquire · ${nextState.game_mode_label || "Classic"}`;
-  try {
-    playRoomEventSounds(previousState, nextState);
-  } catch (error) {
-    console.warn("Sound effect failed.", error);
+  document.title = `${isReplay ? "Acquire Replay" : "Acquire"} · ${nextState.game_mode_label || "Classic"}`;
+  if (!isReplay) {
+    try {
+      playRoomEventSounds(previousState, nextState);
+    } catch (error) {
+      console.warn("Sound effect failed.", error);
+    }
   }
+  if (isReplay) state.statusHistory = replayStatusHistoryAt(state.replayIndex);
   setStatus(nextState.last_action || fallbackMessage);
   renderGame();
 }
@@ -620,10 +755,12 @@ function setPanelFocus(panel, isActive, variant) {
 }
 
 function displayTile(tile) {
+  if (typeof tile !== "string" || !tile) return "";
   return `${tile.slice(1)}${tile[0]}`;
 }
 
 function tileRackSortKey(tile) {
+  if (typeof tile !== "string" || !tile) return [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
   return [Number(tile.slice(1)), boardRows().indexOf(tile[0])];
 }
 
@@ -636,6 +773,35 @@ function compareTilesByRackOrder(left, right) {
 function displayPlayerName(name) {
   if (!name) return "";
   return String(name).slice(0, 8);
+}
+
+function updateSpectatorPlayerHoverClasses() {
+  document.querySelectorAll("[data-spectator-player-id]").forEach((element) => {
+    element.classList.toggle(
+      "is-tile-hovered",
+      element.dataset.spectatorPlayerId === state.spectatorHoveredPlayerId,
+    );
+  });
+}
+
+function setSpectatorHoveredPlayer(playerId) {
+  if (!state.roomState?.is_spectator) return;
+  state.spectatorHoveredPlayerId = playerId;
+  updateSpectatorPlayerHoverClasses();
+  renderBoard();
+}
+
+function enableSpectatorPlayerHover(element, player) {
+  if (!state.roomState?.is_spectator || !player) return;
+  element.classList.add("spectator-player-name-target");
+  element.classList.toggle("is-tile-hovered", player.id === state.spectatorHoveredPlayerId);
+  element.dataset.spectatorPlayerId = player.id;
+  element.title = `Highlight ${player.name}'s tiles on the board`;
+  element.tabIndex = 0;
+  element.addEventListener("mouseenter", () => setSpectatorHoveredPlayer(player.id));
+  element.addEventListener("mouseleave", () => setSpectatorHoveredPlayer(null));
+  element.addEventListener("focus", () => setSpectatorHoveredPlayer(player.id));
+  element.addEventListener("blur", () => setSpectatorHoveredPlayer(null));
 }
 
 function stockCell(stocks, color) {
@@ -681,6 +847,7 @@ function renderHoldings() {
       <td class="money-cell">${player ? formatMoney(player.money) : ""}</td>
       ${stockCells}
     `;
+    enableSpectatorPlayerHover(row.querySelector(".player-name-cell"), player);
     elements.holdingsBody.appendChild(row);
   }
 
@@ -1149,7 +1316,17 @@ function renderSpectatorMode() {
   const isSpectator = !!state.roomState?.is_spectator;
   document.body.classList.toggle("spectator-mode", isSpectator);
   elements.spectatorTilesPanel.hidden = !isSpectator;
-  if (!isSpectator) return;
+  if (!isSpectator) {
+    state.spectatorHoveredPlayerId = null;
+    return;
+  }
+
+  const hoveredPlayerStillExists = (state.roomState.players || []).some(
+    (player) => player.id === state.spectatorHoveredPlayerId,
+  );
+  if (!hoveredPlayerStillExists) {
+    state.spectatorHoveredPlayerId = null;
+  }
 
   elements.spectatorTiles.innerHTML = "";
   for (const player of state.roomState.players || []) {
@@ -1160,12 +1337,16 @@ function renderSpectatorMode() {
       tiles.sort(compareTilesByRackOrder);
     }
     row.innerHTML = `
-      <strong>${player.name}</strong>
+      <strong class="spectator-player-name"></strong>
       <div class="spectator-tile-list">
         ${tiles.map((tile) => `<span class="spectator-tile">${displayTile(tile)}</span>`).join("") || '<span class="panel-note">No tiles</span>'}
       </div>`;
+    const playerName = row.querySelector(".spectator-player-name");
+    playerName.textContent = player.name;
+    enableSpectatorPlayerHover(playerName, player);
     elements.spectatorTiles.appendChild(row);
   }
+  updateSpectatorPlayerHoverClasses();
 }
 
 function handleSpectatorSortTiles() {
@@ -1190,17 +1371,20 @@ async function placeTile(tile) {
 }
 
 function subscribeToRoomState() {
+  if (!socket || isReplay) return;
   socket.emit("join_room_state", {
     room_id: state.roomId,
     player_id: state.playerId,
   });
 }
 
-socket.on("connect", subscribeToRoomState);
+if (socket) {
+  socket.on("connect", subscribeToRoomState);
 
-socket.on("room_state", (data) => {
-  applyRoomState(data, "Connected.");
-});
+  socket.on("room_state", (data) => {
+    applyRoomState(data, "Connected.");
+  });
+}
 
 function handlePlaceButton() {
   if (!state.selectedTile) return;
@@ -1404,8 +1588,15 @@ elements.tradePlus.addEventListener("click", () => {
 elements.copyLinkButton.addEventListener("click", handleCopyLinkButton);
 window.addEventListener("pointerdown", unlockAudio, { passive: true });
 window.addEventListener("keydown", unlockAudio);
+window.addEventListener("keydown", handleReplayKeydown);
 
 renderBoard();
+elements.replayPrevious.addEventListener("click", () => {
+  loadReplaySnapshot(state.replayIndex - 1);
+});
+elements.replayNext.addEventListener("click", () => {
+  loadReplaySnapshot(state.replayIndex + 1);
+});
 elements.placeButton.addEventListener("click", handlePlaceButton);
 elements.foundButton.addEventListener("click", handleFoundButton);
 elements.finishButton.addEventListener("click", handleFinishButton);
@@ -1415,3 +1606,7 @@ elements.acquireOrderButton.addEventListener("click", handleAcquireOrderButton);
 elements.endingCloseButton.addEventListener("click", closeEndingPanel);
 elements.showEndingButton.addEventListener("click", showEndingPanel);
 elements.spectatorSortTiles.addEventListener("click", handleSpectatorSortTiles);
+
+if (isReplay) {
+  loadReplay();
+}

@@ -31,19 +31,26 @@
               <input id="room-password" type="password" placeholder="Required to create or enter a room" maxlength="24">
             </div>
 
-            <div class="field-row">
-              <label for="game-mode">Game mode</label>
-              <select id="game-mode">
-                <option value="classic">Classic · 2–5 players · 9×12 board</option>
-                <option value="expanded">Expanded · 2–8 players · 11×14 board</option>
-              </select>
+            <div class="room-options-row">
+              <div class="field-row">
+                <label for="game-mode">Game mode</label>
+                <select id="game-mode">
+                  <option value="classic">Classic · 2–5 · 9×12</option>
+                  <option value="expanded">Expanded · 2–8 · 11×14</option>
+                </select>
+              </div>
+              <div class="field-row seed-field-row">
+                <label for="game-seed">Seed</label>
+                <input id="game-seed" inputmode="numeric" pattern="[0-9]*" maxlength="10" placeholder="Random" aria-describedby="seed-help">
+              </div>
             </div>
+            <span id="seed-help" class="seed-help">Optional · 0–4294967295</span>
 
             <div class="button-row room-create-row">
               <button id="create-room">Create Room</button>
             </div>
 
-            <p class="status" id="status">Enter your name, invitation code, room password, and game mode to create a room.</p>
+            <p class="status" id="status">Enter your details, choose a mode, and optionally set a reproducible seed.</p>
           </section>
 
           <section class="room-section room-details-panel">
@@ -53,6 +60,13 @@
                 <button id="refresh-rooms" class="secondary-button" type="button">Refresh</button>
               </div>
               <div id="available-rooms" class="available-rooms"></div>
+            </div>
+            <div class="recent-replays-block">
+              <div class="recent-replays-header">
+                <h2>Recent Replays</h2>
+                <span class="recent-replays-limit">Last 10</span>
+              </div>
+              <div id="recent-replays" class="recent-replays"></div>
             </div>
           </section>
         </div>

@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+instance/*.sqlite3
+instance/*.sqlite3-shm
+instance/*.sqlite3-wal
+recording-exports/
