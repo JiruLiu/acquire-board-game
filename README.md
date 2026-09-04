@@ -101,6 +101,8 @@ A recording begins when a room successfully starts. Every successful game action
 
 The lobby lists the ten retained recordings under **Recent Replays**. Open one to view the game through the spectator interface, then use the left and right arrows to move between recorded actions. Replays are read-only, redact reusable player identifiers, and show the final score panel when a completed game reaches its last action.
 
+Use **Resume from Here** to fork the selected playable action into a new live room. The server validates the original snapshot hash, assigns fresh player access IDs, and redirects the replay viewer into the new room as a spectator. **Copy Link** then provides the replacement player links and the generated spectator password. Finished snapshots cannot be restored; step back to an earlier action first. The fork starts a new recording using the same storage schema, with its source recording and sequence stored in the initial event input.
+
 By default, recordings are stored at:
 
 ```text
