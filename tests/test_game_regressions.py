@@ -396,6 +396,125 @@ class GameRegressionTests(unittest.TestCase):
         self.assertEqual(page_response.status_code, 200)
         self.assertIn(recording_id.encode(), page_response.data)
 
+    def test_replay_snapshot_restores_as_new_live_room_with_fresh_access_ids(self):
+        room, creator = self.make_room("RESTORESOURCE")
+        creator.id = "original-creator-secret"
+        room.creator_id = creator.id
+        room.players.append(Player(id="original-opponent-secret", name="Player2"))
+        start_response = self.client.post(
+            "/api/rooms/RESTORESOURCE/start",
+            json={"player_id": creator.id},
+        )
+        self.assertEqual(start_response.status_code, 200)
+        source_recording_id = room.recording_id
+        current_player = room.players[room.current_turn]
+        room.pending_finish_player_id = current_player.id
+        room.last_action = f"{current_player.name} is ready to finish."
+        app_module.record_room_event(room, "place_tile", current_player.id)
+        source_recording = app_module.recording_store.get_game(source_recording_id)
+        source_snapshot = source_recording["snapshots"][1]["state"]
+        expected_status_history = []
+        for recorded_snapshot in source_recording["snapshots"]:
+            message = recorded_snapshot["state"]["last_action"]
+            if not expected_status_history or expected_status_history[-1] != message:
+                expected_status_history.append(message)
+
+        response = self.client.post(
+            f"/api/replays/{source_recording_id}/restore",
+            json={"sequence": 1},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        restored = rooms[payload["room_id"]]
+        original_ids = {"original-creator-secret", "original-opponent-secret"}
+        restored_ids = {player.id for player in restored.players}
+        self.assertNotEqual(restored.id, room.id)
+        self.assertTrue(restored.started)
+        self.assertTrue(restored.restored_from_replay)
+        self.assertTrue(restored_ids.isdisjoint(original_ids))
+        self.assertIn(payload["player_id"], restored.spectator_ids)
+        self.assertTrue(payload["state"]["is_spectator"])
+        self.assertEqual(payload["state"]["status_history"], expected_status_history)
+        self.assertEqual(restored.status_history, expected_status_history)
+        self.assertNotIn("original-creator-secret", str(payload))
+        self.assertNotIn("original-opponent-secret", str(payload))
+        self.assertEqual(
+            restored.players[restored.current_turn].name,
+            source_snapshot["players"][source_snapshot["current_turn"]]["name"],
+        )
+        self.assertEqual(
+            restored.pending_finish_player_id,
+            restored.players[restored.current_turn].id,
+        )
+        self.assertEqual(restored.board, source_snapshot["board"])
+        self.assertEqual(restored.deck, source_snapshot["deck"])
+
+        restored_recording = app_module.recording_store.get_game(restored.recording_id)
+        self.assertEqual(restored_recording["game"]["schema_version"], 1)
+        self.assertEqual(restored_recording["snapshots"][0]["event_type"], "restore_replay")
+        self.assertEqual(
+            restored_recording["snapshots"][0]["input"],
+            {
+                "source_recording_id": source_recording_id,
+                "source_sequence": 1,
+                "status_history": expected_status_history,
+            },
+        )
+        restored_details = self.client.get(
+            f"/api/replays/{restored.recording_id}"
+        ).get_json()
+        self.assertEqual(
+            restored_details["actions"][0]["status_history"],
+            expected_status_history,
+        )
+
+        restored.last_action = "The restored game continued."
+        continued_state = app_module.build_public_room_state(
+            restored, payload["player_id"]
+        )
+        self.assertEqual(
+            continued_state["status_history"],
+            expected_status_history + ["The restored game continued."],
+        )
+
+        spectator_client = socketio.test_client(app)
+        try:
+            spectator_client.emit(
+                "join_room_state",
+                {"room_id": restored.id, "player_id": payload["player_id"]},
+            )
+            self.assertNotIn(restored.id, room_cleanup_timers)
+        finally:
+            spectator_client.disconnect()
+
+    def test_replay_restore_rejects_snapshot_with_invalid_hash(self):
+        room, creator = self.make_room("CORRUPT")
+        room.players.append(Player(id="player-2", name="Player2"))
+        self.client.post(
+            "/api/rooms/CORRUPT/start",
+            json={"player_id": creator.id},
+        )
+        recording_id = room.recording_id
+        with app_module.recording_store.connect() as connection:
+            connection.execute(
+                """
+                UPDATE game_snapshots
+                SET state_hash = 'invalid'
+                WHERE recording_id = ? AND sequence = 0
+                """,
+                (recording_id,),
+            )
+
+        response = self.client.post(
+            f"/api/replays/{recording_id}/restore",
+            json={"sequence": 0},
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("integrity", response.get_json()["error"])
+        self.assertEqual(set(rooms), {"CORRUPT"})
+
     def test_replay_final_snapshot_preserves_game_end_results(self):
         room, creator = self.make_room("FINISHED")
         room.players.append(Player(id="player-2", name="Player2"))
@@ -423,6 +542,12 @@ class GameRegressionTests(unittest.TestCase):
         self.assertTrue(payload["state"]["game_over"])
         self.assertEqual(payload["state"]["winner"], winner.name)
         self.assertEqual(payload["state"]["final_rankings"][0]["player_id"], "player-1")
+        restore_response = self.client.post(
+            f"/api/replays/{room.recording_id}/restore",
+            json={"sequence": 1},
+        )
+        self.assertEqual(restore_response.status_code, 400)
+        self.assertIn("already ended", restore_response.get_json()["error"])
 
     def test_replay_snapshot_allows_last_placed_tile_without_owner_label(self):
         room, creator = self.make_room("NULLOWNER")

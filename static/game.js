@@ -84,6 +84,7 @@ const elements = {
   replayControls: document.getElementById("replay-controls"),
   replayPrevious: document.getElementById("replay-previous"),
   replayNext: document.getElementById("replay-next"),
+  replayRestore: document.getElementById("replay-restore"),
   replayPosition: document.getElementById("replay-position"),
   replayEvent: document.getElementById("replay-event"),
 };
@@ -360,6 +361,14 @@ function replayEventLabel(eventType) {
 
 function replayStatusHistoryAt(index) {
   const history = [];
+  const inheritedHistory = state.replayActions[0]?.status_history;
+  if (Array.isArray(inheritedHistory)) {
+    for (const message of inheritedHistory) {
+      if (typeof message === "string" && message && history[history.length - 1] !== message) {
+        history.push(message);
+      }
+    }
+  }
   for (const action of state.replayActions.slice(0, index + 1)) {
     if (action.message && history[history.length - 1] !== action.message) {
       history.push(action.message);
@@ -385,6 +394,12 @@ function renderReplayControls() {
   elements.replayNext.disabled = state.replayLoading
     || !total
     || state.replayIndex >= total - 1;
+  const cannotRestore = state.replayLoading || !state.roomState || state.roomState.game_over;
+  elements.replayRestore.disabled = cannotRestore;
+  elements.replayRestore.textContent = state.replayLoading ? "Working…" : "Resume from Here";
+  elements.replayRestore.title = state.roomState?.game_over
+    ? "Step back to a playable action before restoring."
+    : "Create a new live game from this action.";
 }
 
 async function prefetchReplaySnapshot(index) {
@@ -459,6 +474,37 @@ function handleReplayKeydown(event) {
   if (event.key === "ArrowRight" && state.replayIndex < state.replayActions.length - 1) {
     event.preventDefault();
     loadReplaySnapshot(state.replayIndex + 1);
+  }
+}
+
+async function restoreReplayHere() {
+  const action = state.replayActions[state.replayIndex];
+  if (!isReplay || !action || state.replayLoading || state.roomState?.game_over) return;
+  const shouldRestore = window.confirm(
+    "Create a new live game from this action? This starts a new recording and may remove the oldest retained replay."
+  );
+  if (!shouldRestore) return;
+
+  state.replayLoading = true;
+  renderReplayControls();
+  try {
+    const data = await api(`/api/replays/${encodeURIComponent(state.replayId)}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ sequence: action.sequence }),
+    });
+    try {
+      window.sessionStorage.setItem(
+        `acquire-restored-password:${data.room_id}`,
+        data.spectator_password,
+      );
+    } catch (_error) {
+      // Player links still work if browser storage is unavailable.
+    }
+    window.location.href = `/game/${encodeURIComponent(data.room_id)}?player_id=${encodeURIComponent(data.player_id)}`;
+  } catch (error) {
+    setStatus(error.message, true);
+    state.replayLoading = false;
+    renderReplayControls();
   }
 }
 
@@ -744,7 +790,13 @@ function applyRoomState(nextState, fallbackMessage = "Connected.") {
       console.warn("Sound effect failed.", error);
     }
   }
-  if (isReplay) state.statusHistory = replayStatusHistoryAt(state.replayIndex);
+  if (isReplay) {
+    state.statusHistory = replayStatusHistoryAt(state.replayIndex);
+  } else if (Array.isArray(nextState.status_history)) {
+    state.statusHistory = nextState.status_history.filter(
+      (message) => typeof message === "string" && message,
+    );
+  }
   setStatus(nextState.last_action || fallbackMessage);
   renderGame();
 }
@@ -1524,8 +1576,17 @@ function copyLinksText() {
   const lines = players.map((player) => (
     `${player.name}: ${baseUrl}?player_id=${encodeURIComponent(player.id)}`
   ));
+  let spectatorPassword = "";
+  try {
+    spectatorPassword = window.sessionStorage.getItem(
+      `acquire-restored-password:${state.roomId}`,
+    ) || "";
+  } catch (_error) {
+    // Browser storage can be unavailable in restricted browsing modes.
+  }
   return [
     `Room ${state.roomId}`,
+    ...(spectatorPassword ? [`Spectator password: ${spectatorPassword}`] : []),
     ...lines,
   ].join("\n");
 }
@@ -1597,6 +1658,7 @@ elements.replayPrevious.addEventListener("click", () => {
 elements.replayNext.addEventListener("click", () => {
   loadReplaySnapshot(state.replayIndex + 1);
 });
+elements.replayRestore.addEventListener("click", restoreReplayHere);
 elements.placeButton.addEventListener("click", handlePlaceButton);
 elements.foundButton.addEventListener("click", handleFoundButton);
 elements.finishButton.addEventListener("click", handleFinishButton);

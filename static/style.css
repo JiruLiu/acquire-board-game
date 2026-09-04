@@ -85,11 +85,11 @@ body {
 }
 
 .replay-controls {
-  width: min(25vw, 430px);
+  width: min(34vw, 580px);
   margin: 0 auto 0.55vw;
   padding: 0.38vw 0.48vw;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 0.38vw;
 }
@@ -99,7 +99,8 @@ body {
 }
 
 .replay-lobby-link,
-.replay-arrow {
+.replay-arrow,
+.replay-restore {
   display: inline-grid;
   min-width: 2.1vw;
   min-height: 1.75vw;
@@ -120,6 +121,13 @@ body {
 
 .replay-arrow {
   padding: 0.32vw;
+}
+
+.replay-restore {
+  min-width: 6.8vw;
+  padding: 0.4vw 0.58vw;
+  background: var(--accent);
+  font-size: 0.55vw;
 }
 
 .replay-progress {
@@ -2268,7 +2276,8 @@ button:disabled {
   }
 
   .replay-lobby-link,
-  .replay-arrow {
+  .replay-arrow,
+  .replay-restore {
     min-width: 38px;
     min-height: 34px;
     border-radius: 8px;
@@ -2277,6 +2286,12 @@ button:disabled {
 
   .replay-lobby-link {
     padding: 8px 9px;
+    font-size: clamp(0.68rem, 2vw, 0.82rem);
+  }
+
+  .replay-restore {
+    min-width: 118px;
+    padding: 8px 10px;
     font-size: clamp(0.68rem, 2vw, 0.82rem);
   }
 

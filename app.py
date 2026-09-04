@@ -79,6 +79,8 @@ class Room:
     seed: int = field(default_factory=lambda: secrets.randbits(32))
     recording_id: str | None = None
     recording_sequence: int | None = None
+    restored_from_replay: bool = False
+    status_history: list[str] = field(default_factory=list)
     players: list[Player] = field(default_factory=list)
     spectator_ids: set[str] = field(default_factory=set)
     spectator_names: dict[str, str] = field(default_factory=dict)
@@ -293,7 +295,13 @@ def recording_status(room: Room) -> dict:
     return {"status": status, "sequence": room.recording_sequence}
 
 
-def start_room_recording(room: Room, actor_id: str) -> None:
+def start_room_recording(
+    room: Room,
+    actor_id: str,
+    *,
+    event_type: str = "start_game",
+    event_input: dict | None = None,
+) -> None:
     room.recording_id = new_recording_id()
     room.recording_sequence = 0
     state = serialize_room(room)
@@ -309,7 +317,12 @@ def start_room_recording(room: Room, actor_id: str) -> None:
             seed=room.seed,
             state=state,
             actor_id=actor_id,
-            event_input={"mode": room.mode, "seed": room.seed},
+            event_input=(
+                event_input
+                if event_input is not None
+                else {"mode": room.mode, "seed": room.seed}
+            ),
+            event_type=event_type,
         )
         for candidate in rooms.values():
             if candidate.recording_id in pruned_ids:
@@ -379,6 +392,18 @@ def room_has_connected_player(room_id: str) -> bool:
     )
 
 
+def room_has_keepalive_connection(room_id: str) -> bool:
+    normalized_room_id = room_id.upper()
+    if room_has_connected_player(normalized_room_id):
+        return True
+    room = rooms.get(normalized_room_id)
+    return bool(
+        room
+        and room.restored_from_replay
+        and room_connected_sids.get(normalized_room_id)
+    )
+
+
 def connected_spectator_names(room: Room) -> list[str]:
     connected_ids = {
         socket_membership.get(sid, (None, None))[1]
@@ -400,7 +425,7 @@ def schedule_room_cleanup(room_id: str) -> None:
 
     def cleanup() -> None:
         with room_lock:
-            if room_has_connected_player(normalized_room_id):
+            if room_has_keepalive_connection(normalized_room_id):
                 return
             rooms.pop(normalized_room_id, None)
             room_connected_sids.pop(normalized_room_id, None)
@@ -432,7 +457,7 @@ def detach_socket(sid: str, leave_socket_room: bool = False) -> None:
     active_sids.discard(sid)
     if was_spectator:
         broadcast_room_state(room)
-    if room_has_connected_player(room_id):
+    if room_has_keepalive_connection(room_id):
         return
     if not active_sids:
         room_connected_sids.pop(room_id, None)
@@ -464,6 +489,10 @@ def broadcast_room_state(room: Room) -> None:
 
 
 def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
+    if room.last_action and (
+        not room.status_history or room.status_history[-1] != room.last_action
+    ):
+        room.status_history.append(room.last_action)
     is_spectator = bool(viewer_id and viewer_id in room.spectator_ids)
     mode = game_mode_config(room)
     return copy.deepcopy({
@@ -487,6 +516,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "game_over": room.game_over,
         "final_rankings": room.final_rankings,
         "last_action": room.last_action,
+        "status_history": room.status_history,
         "last_placed_tile": room.last_placed_tile,
         "last_placed_started_acquire": room.last_placed_started_acquire,
         "players": [
@@ -536,12 +566,38 @@ def replay_game_metadata(game: dict) -> dict:
 
 
 def replay_action_metadata(snapshot: dict) -> dict:
-    return {
+    action = {
         "sequence": snapshot["sequence"],
         "recorded_at": snapshot["recorded_at"],
         "event_type": snapshot["event_type"],
         "message": snapshot.get("state", {}).get("last_action", ""),
     }
+    inherited_history = snapshot.get("input", {}).get("status_history")
+    if isinstance(inherited_history, list) and all(
+        isinstance(message, str) for message in inherited_history
+    ):
+        action["status_history"] = inherited_history
+    return action
+
+
+def recorded_status_history(snapshots: list[dict], sequence: int) -> list[str]:
+    history: list[str] = []
+
+    def append_message(message) -> None:
+        if isinstance(message, str) and message and (
+            not history or history[-1] != message
+        ):
+            history.append(message)
+
+    for snapshot in snapshots:
+        if snapshot["sequence"] > sequence:
+            break
+        inherited_history = snapshot.get("input", {}).get("status_history")
+        if isinstance(inherited_history, list):
+            for message in inherited_history:
+                append_message(message)
+        append_message(snapshot.get("state", {}).get("last_action"))
+    return history
 
 
 def build_replay_room_state(snapshot_state: dict, game: dict) -> dict:
@@ -556,6 +612,47 @@ def build_replay_room_state(snapshot_state: dict, game: dict) -> dict:
         "sequence": snapshot_state.get("recording_sequence"),
     }
     return state
+
+
+def replace_restored_player_ids(value, replacements: dict[str, str]):
+    if isinstance(value, dict):
+        return {
+            key: replace_restored_player_ids(item, replacements)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [replace_restored_player_ids(item, replacements) for item in value]
+    if isinstance(value, str):
+        return replacements.get(value, value)
+    return value
+
+
+def restore_room_from_snapshot(
+    snapshot_state: dict,
+    *,
+    room_id: str,
+    password: str,
+    status_history: list[str] | None = None,
+) -> tuple[Room, str]:
+    replacements = {
+        player["id"]: uuid.uuid4().hex
+        for player in snapshot_state.get("players", [])
+    }
+    restored_state = replace_restored_player_ids(snapshot_state, replacements)
+    restored_state["room_id"] = room_id
+    restored_state["room_name"] = f"{snapshot_state['room_name']} (Restored)"
+    restored_state["recording_id"] = None
+    restored_state["recording_sequence"] = None
+    restored_state["spectator_ids"] = []
+    restored_state["spectator_names"] = {}
+
+    room = deserialize_room(restored_state, password=password)
+    room.restored_from_replay = True
+    room.status_history = list(status_history or [])
+    spectator_id = f"spectator-{uuid.uuid4().hex}"
+    room.spectator_ids.add(spectator_id)
+    room.spectator_names[spectator_id] = "ReplayHost"
+    return room, spectator_id
 
 
 def draw_tile(room: Room, player: Player, preserve_slot: bool = False) -> bool:
@@ -1354,6 +1451,80 @@ def replay_snapshot(recording_id: str, sequence: int):
     return response
 
 
+@app.post("/api/replays/<recording_id>/restore")
+def restore_replay(recording_id: str):
+    data = request_data()
+    sequence = data.get("sequence")
+    if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+        return jsonify({"error": "Choose a valid replay action to restore."}), 400
+
+    with room_lock:
+        recording = recording_store.get_game(recording_id)
+        if not recording:
+            return jsonify({"error": "Replay not found."}), 404
+        snapshot = next(
+            (
+                candidate
+                for candidate in recording["snapshots"]
+                if candidate["sequence"] == sequence
+            ),
+            None,
+        )
+        if not snapshot:
+            return jsonify({"error": "Replay action not found."}), 404
+        if snapshot_hash(snapshot["state"]) != snapshot["state_hash"]:
+            return jsonify({
+                "error": "This replay action failed its integrity check and cannot be restored."
+            }), 409
+        if snapshot["state"].get("game_over"):
+            return jsonify({
+                "error": "This game has already ended. Step back to a playable action."
+            }), 400
+
+        room_id = new_room_id()
+        password = secrets.token_urlsafe(9)
+        status_history = recorded_status_history(recording["snapshots"], sequence)
+        try:
+            room, spectator_id = restore_room_from_snapshot(
+                snapshot["state"],
+                room_id=room_id,
+                password=password,
+                status_history=status_history,
+            )
+        except (KeyError, TypeError, ValueError):
+            app.logger.exception(
+                "Could not restore replay %s at sequence %s",
+                recording_id,
+                sequence,
+            )
+            return jsonify({
+                "error": "This recording is not compatible with game restoration."
+            }), 409
+
+        rooms[room.id] = room
+        schedule_room_cleanup(room.id)
+        start_room_recording(
+            room,
+            spectator_id,
+            event_type="restore_replay",
+            event_input={
+                "source_recording_id": recording_id,
+                "source_sequence": sequence,
+                "status_history": status_history,
+            },
+        )
+        state = build_public_room_state(room, spectator_id)
+
+    response = jsonify({
+        "room_id": room.id,
+        "player_id": spectator_id,
+        "spectator_password": password,
+        "state": state,
+    })
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/rooms")
 def list_rooms():
     with room_lock:
@@ -1374,7 +1545,7 @@ def list_rooms():
                 "started": room.started,
             }
             for room in rooms.values()
-            if room_has_connected_player(room.id)
+            if room_has_keepalive_connection(room.id)
         ]
     return jsonify({"rooms": room_list})
 
@@ -1425,7 +1596,7 @@ def join_room_state(data):
             socket_join_room(player_socket_room(room_id, player_id))
             socket_membership[request.sid] = (room_id, player_id)
             room_connected_sids.setdefault(room_id, set()).add(request.sid)
-            if is_player:
+            if is_player or room.restored_from_replay:
                 cancel_room_cleanup(room_id)
             broadcast_room_state(room)
 

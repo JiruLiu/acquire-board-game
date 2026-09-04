@@ -270,6 +270,7 @@ class RecordingStore:
         actor_id: str | None,
         event_input: dict,
         app_version: str = APP_RECORDING_VERSION,
+        event_type: str = "start_game",
     ) -> list[str]:
         now = utc_now()
         state_json = canonical_json(state)
@@ -302,11 +303,12 @@ class RecordingStore:
                 INSERT INTO game_snapshots (
                     recording_id, sequence, recorded_at, event_type,
                     actor_id, input_json, state_json, state_hash
-                ) VALUES (?, 0, ?, 'start_game', ?, ?, ?, ?)
+                ) VALUES (?, 0, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     recording_id,
                     now,
+                    event_type,
                     actor_id,
                     canonical_json(event_input),
                     state_json,
