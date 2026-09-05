@@ -2029,10 +2029,14 @@ button:disabled {
   line-height: 1;
 }
 
+.bank-stock-availability {
+  font-size: 0.68vw;
+}
+
 .bank-stock-size {
   margin-top: 0.08vw;
   color: var(--muted);
-  font-size: 0.5vw;
+  font-size: 0.44vw;
   font-weight: 700;
 }
 
@@ -2114,6 +2118,64 @@ button:disabled {
 
 .bank-row td {
   font-weight: 700;
+}
+
+.bank-row-label {
+  text-align: left !important;
+  line-height: 1;
+}
+
+.bank-row-label span {
+  display: block;
+}
+
+.bank-row-label span:last-child {
+  margin-top: 0.1vw;
+  color: var(--muted);
+  font-size: 0.48vw;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+@media (min-width: 981px) {
+  body[data-game-mode="expanded"] .holdings-panel {
+    padding-top: 0.45vw;
+    padding-bottom: 0.35vw;
+  }
+
+  body[data-game-mode="expanded"] .holdings-header {
+    min-height: 1vw;
+  }
+
+  body[data-game-mode="expanded"] .holdings-header h3 {
+    margin-top: 0;
+    font-size: 0.84vw;
+  }
+
+  body[data-game-mode="expanded"] .holdings-table {
+    font-size: 0.68vw;
+    line-height: 1.05;
+  }
+
+  body[data-game-mode="expanded"] .holdings-table th {
+    font-size: 0.56vw;
+  }
+
+  body[data-game-mode="expanded"] .holdings-table th,
+  body[data-game-mode="expanded"] .holdings-table td {
+    padding-top: 0.07vw;
+    padding-bottom: 0.07vw;
+  }
+
+  body[data-game-mode="expanded"] .bank-stock-availability {
+    font-size: 0.56vw;
+  }
+
+  body[data-game-mode="expanded"] .bank-stock-size,
+  body[data-game-mode="expanded"] .bank-row-label span:last-child {
+    font-size: 0.4vw;
+  }
 }
 
 .share-table th .legend-group {
