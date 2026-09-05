@@ -863,14 +863,18 @@ function stockCell(stocks, color) {
   `;
 }
 
-function bankStockCell(stocks, companySizes, color) {
-  const count = stocks?.[color] || 0;
+function bankStockCell(stocks, companySizes, players, color) {
+  const available = stocks?.[color] || 0;
+  const total = players.reduce(
+    (sum, player) => sum + (player?.stocks?.[color] || 0),
+    available,
+  );
   const size = companySizes?.[color] || 0;
   return `
-    <td class="stock-count stock-${color}${count ? " is-present" : ""}">
-      <span class="bank-stock-stack">
-        <span>${count ? String(count) : ""}</span>
-        <span class="bank-stock-size">${size ? String(size) : ""}</span>
+    <td class="stock-count stock-${color} is-present" title="${available} of ${total} shares available; company size ${size}">
+      <span class="bank-stock-stack" aria-label="${available} of ${total} shares available; company size ${size}">
+        <span class="bank-stock-availability">${available}/${total}</span>
+        <span class="bank-stock-size">Size ${size}</span>
       </span>
     </td>
   `;
@@ -906,11 +910,13 @@ function renderHoldings() {
   const bankRow = document.createElement("tr");
   bankRow.className = "bank-row";
   const bankStockCells = STOCK_COLORS
-    .map((color) => bankStockCell(bankStocks, companySizes, color))
+    .map((color) => bankStockCell(bankStocks, companySizes, players, color))
     .join("");
   bankRow.innerHTML = `
-    <td>Bank</td>
-    <td class="money-cell"></td>
+    <td colspan="2" class="bank-row-label">
+      <span>Shares</span>
+      <span>Available / total</span>
+    </td>
     ${bankStockCells}
   `;
   elements.holdingsBody.appendChild(bankRow);
