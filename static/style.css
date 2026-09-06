@@ -2139,6 +2139,44 @@ button:disabled {
 }
 
 @media (min-width: 981px) {
+  body[data-game-mode="classic"] .holdings-panel {
+    padding-top: 0.55vw;
+    padding-bottom: 0.5vw;
+  }
+
+  body[data-game-mode="classic"] .holdings-header {
+    min-height: 1.1vw;
+  }
+
+  body[data-game-mode="classic"] .holdings-header h3 {
+    margin-top: 0.08vw;
+    font-size: 0.9vw;
+  }
+
+  body[data-game-mode="classic"] .holdings-table {
+    font-size: 0.82vw;
+    line-height: 1.1;
+  }
+
+  body[data-game-mode="classic"] .holdings-table th {
+    font-size: 0.62vw;
+  }
+
+  body[data-game-mode="classic"] .holdings-table th,
+  body[data-game-mode="classic"] .holdings-table td {
+    padding-top: 0.14vw;
+    padding-bottom: 0.14vw;
+  }
+
+  body[data-game-mode="classic"] .bank-stock-availability {
+    font-size: 0.62vw;
+  }
+
+  body[data-game-mode="classic"] .bank-stock-size,
+  body[data-game-mode="classic"] .bank-row-label span:last-child {
+    font-size: 0.42vw;
+  }
+
   body[data-game-mode="expanded"] .holdings-panel {
     padding-top: 0.45vw;
     padding-bottom: 0.35vw;

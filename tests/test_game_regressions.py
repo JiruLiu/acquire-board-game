@@ -92,7 +92,7 @@ class GameRegressionTests(unittest.TestCase):
         self.assertEqual(len(room.deck), 154 - (8 * 6))
 
     def test_room_capacity_depends_on_game_mode(self):
-        classic, _creator = self.make_room("CLASSIC", mode="classic")
+        classic, classic_creator = self.make_room("CLASSIC", mode="classic")
         classic.players.extend(
             Player(id=f"classic-{index}", name=f"Classic{index}")
             for index in range(2, 6)
@@ -103,7 +103,11 @@ class GameRegressionTests(unittest.TestCase):
             for index in range(2, 9)
         )
 
-        classic_response = self.client.post(
+        classic_sixth_response = self.client.post(
+            "/api/rooms/CLASSIC/join",
+            json={"player_name": "Classic6", "room_password": "pw"},
+        )
+        classic_seventh_response = self.client.post(
             "/api/rooms/CLASSIC/join",
             json={"player_name": "Extra", "room_password": "pw"},
         )
@@ -111,9 +115,19 @@ class GameRegressionTests(unittest.TestCase):
             "/api/rooms/EXPANDED/join",
             json={"player_name": "Extra", "room_password": "pw"},
         )
+        classic_start_response = self.client.post(
+            "/api/rooms/CLASSIC/start",
+            json={"player_id": classic_creator.id},
+        )
 
-        self.assertEqual(classic_response.status_code, 400)
-        self.assertIn("limit is 5", classic_response.get_json()["error"])
+        self.assertEqual(classic_sixth_response.status_code, 200)
+        self.assertEqual(len(classic.players), 6)
+        self.assertEqual(classic_sixth_response.get_json()["state"]["max_players"], 6)
+        self.assertEqual(classic_seventh_response.status_code, 400)
+        self.assertIn("limit is 6", classic_seventh_response.get_json()["error"])
+        self.assertEqual(classic_start_response.status_code, 200)
+        self.assertTrue(all(len(player.tiles) == 6 for player in classic.players))
+        self.assertEqual(len(classic.deck), 108 - (6 * 6))
         self.assertEqual(expanded_response.status_code, 400)
         self.assertIn("limit is 8", expanded_response.get_json()["error"])
 

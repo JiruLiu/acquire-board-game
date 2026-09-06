@@ -120,6 +120,27 @@ class RecordingStateTests(unittest.TestCase):
         self.assertEqual(snapshot_hash(state), snapshot_hash(reordered))
         self.assertNotEqual(snapshot_hash(state), snapshot_hash(changed))
 
+    def test_classic_snapshots_with_previous_player_limit_remain_compatible(self):
+        room = self.make_acquisition_room()
+        room.mode = "classic"
+        room.deck = []
+        room.board = {}
+        room.companies_found = {
+            color: False for color in room.companies_found
+        }
+        room.pending_acquire_starter_id = None
+        room.pending_acquire_survivor = None
+        room.pending_acquire_targets = []
+        room.pending_acquire_sizes = {}
+        room.pending_acquire_reward_details = []
+        room.pending_acquire_player_order = []
+        room.last_placed_tile = None
+        room.last_placed_started_acquire = False
+        state = serialize_room(room)
+        state["rules"]["max_players"] = 5
+
+        self.assertEqual(validate_snapshot_state(state), [])
+
     def test_invariants_report_duplicate_tiles(self):
         state = serialize_room(self.make_acquisition_room())
         state["deck"].append("C3")
