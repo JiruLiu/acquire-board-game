@@ -28,7 +28,7 @@ GAME_MODES = {
         "label": "Classic",
         "rows": list("ABCDEFGHI"),
         "columns": [str(i) for i in range(1, 13)],
-        "max_players": 5,
+        "max_players": 6,
     },
     "expanded": {
         "label": "Expanded",

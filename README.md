@@ -20,7 +20,7 @@ Current features include:
 - list active rooms and the players waiting in each room
 - validate player names as 1-10 letters or numbers
 - prevent duplicate player names within a room
-- offer Classic rooms for 2-5 players and Expanded rooms for 2-8 players
+- offer Classic rooms for 2-6 players and Expanded rooms for 2-8 players
 - initialize games from a supplied or automatically generated reproducible seed
 - allow only the room creator to start the game
 - move players and waiting spectators to the board page after start
@@ -63,7 +63,7 @@ Enter the fields on the left side of the lobby:
 2. Invitation code: `evanston`
 3. A room password of your choice
 4. A game mode:
-   - **Classic**: 2-5 players on the original 9x12 board
+   - **Classic**: 2-6 players on the original 9x12 board
    - **Expanded**: 2-8 players on an 11x14 board
 5. An optional numeric seed from `0` through `4294967295`
 

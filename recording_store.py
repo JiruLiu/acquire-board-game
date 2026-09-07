@@ -59,14 +59,21 @@ def validate_snapshot_state(state: dict) -> list[str]:
     columns = state.get("board_columns") or []
     if mode in expected_dimensions and (rows, columns) != expected_dimensions[mode]:
         errors.append(f"board dimensions do not match {mode} mode")
-    expected_rules = {
+    expected_rule_values = {
         "starting_cash": 6000,
         "starting_bank_shares": 25,
         "super_company_size": 10,
         "game_end_company_size": 41,
-        "max_players": 8 if mode == "expanded" else 5,
     }
-    if state.get("rules") != expected_rules:
+    compatible_player_limits = {
+        "classic": (5, 6),
+        "expanded": (8,),
+    }.get(mode, ())
+    compatible_rules = [
+        {**expected_rule_values, "max_players": player_limit}
+        for player_limit in compatible_player_limits
+    ]
+    if state.get("rules") not in compatible_rules:
         errors.append("recorded rules do not match schema version 1")
     seed = state.get("seed")
     if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 0xFFFFFFFF:
