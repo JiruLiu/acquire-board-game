@@ -75,6 +75,7 @@ class Room:
     recording_sequence: int | None = None
     restored_from_replay: bool = False
     status_history: list[str] = field(default_factory=list)
+    valuation_history: list[dict] = field(default_factory=list)
     players: list[Player] = field(default_factory=list)
     spectator_ids: set[str] = field(default_factory=set)
     spectator_names: dict[str, str] = field(default_factory=dict)
@@ -98,6 +99,7 @@ class Room:
     pending_acquire_targets: list[str] = field(default_factory=list)
     pending_acquire_sizes: dict[str, int] = field(default_factory=dict)
     pending_acquire_reward_details: list[dict] = field(default_factory=list)
+    pending_acquire_reward_collected_player_ids: list[str] = field(default_factory=list)
     pending_acquire_ordering: bool = False
     pending_acquire_player_order: list[str] = field(default_factory=list)
     pending_acquire_player_index: int = 0
@@ -199,6 +201,7 @@ def serialize_room(room: Room) -> dict:
         "pending_acquire_targets": room.pending_acquire_targets,
         "pending_acquire_sizes": room.pending_acquire_sizes,
         "pending_acquire_reward_details": room.pending_acquire_reward_details,
+        "pending_acquire_reward_collected_player_ids": room.pending_acquire_reward_collected_player_ids,
         "pending_acquire_ordering": room.pending_acquire_ordering,
         "pending_acquire_player_order": room.pending_acquire_player_order,
         "pending_acquire_player_index": room.pending_acquire_player_index,
@@ -263,6 +266,9 @@ def deserialize_room(state: dict, password: str = "") -> Room:
         pending_acquire_reward_details=copy.deepcopy(
             state["pending_acquire_reward_details"]
         ),
+        pending_acquire_reward_collected_player_ids=list(
+            state.get("pending_acquire_reward_collected_player_ids") or []
+        ),
         pending_acquire_ordering=state["pending_acquire_ordering"],
         pending_acquire_player_order=list(state["pending_acquire_player_order"]),
         pending_acquire_player_index=state["pending_acquire_player_index"],
@@ -322,6 +328,7 @@ def start_room_recording(
             if candidate.recording_id in pruned_ids:
                 candidate.recording_id = None
                 candidate.recording_sequence = None
+        append_valuation_point(room)
     except Exception:
         app.logger.exception("Could not start recording for room %s", room.id)
         room.recording_id = None
@@ -356,6 +363,7 @@ def record_room_event(
             room.recording_sequence = None
         else:
             room.recording_sequence = sequence
+            append_valuation_point(room)
     except Exception:
         app.logger.exception(
             "Could not record %s for room %s", event_type, room.id
@@ -500,6 +508,7 @@ def build_public_room_state(room: Room, viewer_id: str | None) -> dict:
         "board_columns": mode["columns"],
         "max_players": mode["max_players"],
         "is_spectator": is_spectator,
+        "valuation_history": room.valuation_history if is_spectator else [],
         "spectators": connected_spectator_names(room),
         "started": room.started,
         "current_turn_player_id": (
@@ -1047,6 +1056,23 @@ def build_final_rankings(room: Room) -> list[dict]:
     return rankings
 
 
+def append_valuation_point(room: Room) -> None:
+    if room.recording_sequence is None:
+        return
+    rankings = build_final_rankings(room)
+    room.valuation_history.append({
+        "operation": room.recording_sequence,
+        "players": [
+            {
+                "player_id": item["player_id"],
+                "name": item["name"],
+                "money": item["final_total"],
+            }
+            for item in rankings
+        ],
+    })
+
+
 def liquidate_and_rank(room: Room) -> None:
     room.final_rankings = build_final_rankings(room)
     room.winner = room.final_rankings[0]["name"] if room.final_rankings else None
@@ -1109,6 +1135,7 @@ def pending_acquire_state(room: Room) -> dict | None:
         "sizes": room.pending_acquire_sizes,
         "ordering": room.pending_acquire_ordering,
         "choosing_survivor": bool(room.pending_acquire_survivor_choices),
+        "rewards": pending_acquire_rewards(room),
     }
     if room.pending_acquire_survivor_choices:
         return {
@@ -1123,6 +1150,14 @@ def pending_acquire_state(room: Room) -> dict | None:
             **base_state,
             "active_target": None,
             "active_player_id": room.pending_acquire_starter_id,
+            "active_player_name": "",
+            "stock_count": 0,
+        }
+    if base_state["rewards"]["waiting_player_ids"]:
+        return {
+            **base_state,
+            "active_target": None,
+            "active_player_id": None,
             "active_player_name": "",
             "stock_count": 0,
         }
@@ -1150,6 +1185,7 @@ def clear_pending_acquire(room: Room) -> None:
     room.pending_acquire_targets = []
     room.pending_acquire_sizes = {}
     room.pending_acquire_reward_details = []
+    room.pending_acquire_reward_collected_player_ids = []
     room.pending_acquire_ordering = False
     room.pending_acquire_player_order = []
     room.pending_acquire_player_index = 0
@@ -1196,8 +1232,44 @@ def acquire_order_has_tie(targets: list[str], sizes: dict[str, int]) -> bool:
     return False
 
 
+def pending_acquire_reward_totals(room: Room) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for detail in room.pending_acquire_reward_details:
+        amount = int(detail.get("each") or 0)
+        for player_id in detail.get("player_ids") or []:
+            totals[player_id] = totals.get(player_id, 0) + amount
+    return totals
+
+
+def pending_acquire_rewards(room: Room) -> dict:
+    totals = pending_acquire_reward_totals(room)
+    collected = set(room.pending_acquire_reward_collected_player_ids)
+    return {
+        "details": room.pending_acquire_reward_details,
+        "totals": totals,
+        "collected_player_ids": sorted(collected),
+        "waiting_player_ids": sorted(set(totals) - collected),
+    }
+
+
+def set_pending_acquire_rewards(room: Room, targets: list[str]) -> None:
+    room.pending_acquire_reward_details = [
+        detail
+        for target in targets
+        for detail in shareholder_reward_allocations(room, target)[0]
+    ]
+    room.pending_acquire_reward_collected_player_ids = []
+
+
+def reward_waiting_names(room: Room) -> str:
+    waiting = set(pending_acquire_rewards(room)["waiting_player_ids"])
+    return ", ".join(player.name for player in room.players if player.id in waiting)
+
+
 def advance_acquire_step(room: Room) -> None:
     if room.pending_acquire_ordering:
+        return
+    if pending_acquire_rewards(room)["waiting_player_ids"]:
         return
 
     while room.pending_acquire_survivor and room.pending_acquire_targets:
@@ -1965,15 +2037,7 @@ def place_tile(room_id: str):
                     if survivor
                     else []
                 )
-                acquire_reward_details = (
-                    [
-                        detail
-                        for target in targets
-                        for detail in pay_shareholder_rewards(room, target)
-                    ]
-                    if survivor
-                    else []
-                )
+                acquire_reward_details = []
                 for connected_tile in connected:
                     if connected_tile in room.board and isinstance(room.board[connected_tile], dict):
                         room.board[connected_tile]["company"] = "acquire"
@@ -1986,9 +2050,12 @@ def place_tile(room_id: str):
                     for color in adjacent_company_colors
                 }
                 room.pending_acquire_reward_details = acquire_reward_details
-                room.pending_acquire_ordering = bool(
-                    survivor and acquire_order_has_tie(targets, sizes_before_acquire)
-                )
+                if survivor:
+                    set_pending_acquire_rewards(room, targets)
+                    acquire_reward_details = room.pending_acquire_reward_details
+                # Acquired companies always resolve from smallest to largest;
+                # equal sizes follow the S&P company order in STOCK_COLORS.
+                room.pending_acquire_ordering = False
                 room.pending_acquire_player_order = reverse_turn_order(room)
                 room.pending_acquire_player_index = 0
                 room.pending_acquire_target_index = 0
@@ -2016,7 +2083,13 @@ def place_tile(room_id: str):
                 else:
                     advance_acquire_step(room)
                     pending = pending_acquire_state(room)
-                if (
+                if pending and pending["rewards"]["waiting_player_ids"]:
+                    room.last_action = (
+                        f"{current_player.name} placed {tile_label}. "
+                        f"Acquire: {survivor} acquires {', '.join(targets)}. "
+                        f"Wait for collecting rewards: {reward_waiting_names(room)}."
+                    )
+                elif (
                     pending
                     and not room.pending_acquire_ordering
                     and not room.pending_acquire_survivor_choices
@@ -2195,16 +2268,13 @@ def set_acquire_survivor(room_id: str):
             sizes = room.pending_acquire_sizes
             companies = set(sizes)
             targets = ordered_acquire_targets(companies, survivor, sizes)
-            reward_details = [
-                detail
-                for target in targets
-                for detail in pay_shareholder_rewards(room, target)
-            ]
             room.pending_acquire_survivor = survivor
             room.pending_acquire_survivor_choices = []
             room.pending_acquire_targets = targets
-            room.pending_acquire_reward_details = reward_details
-            room.pending_acquire_ordering = acquire_order_has_tie(targets, sizes)
+            set_pending_acquire_rewards(room, targets)
+            reward_details = room.pending_acquire_reward_details
+            # ordered_acquire_targets already applies size, then S&P company order.
+            room.pending_acquire_ordering = False
             room.pending_acquire_player_index = 0
             room.pending_acquire_target_index = 0
 
@@ -2223,7 +2293,12 @@ def set_acquire_survivor(room_id: str):
             else:
                 advance_acquire_step(room)
                 pending = pending_acquire_state(room)
-                if pending:
+                if pending and pending["rewards"]["waiting_player_ids"]:
+                    room.last_action = (
+                        f"{survivor} chosen as the surviving company. "
+                        f"Wait for collecting rewards: {reward_waiting_names(room)}."
+                    )
+                elif pending:
                     room.last_action = (
                         f"{survivor} chosen as the surviving company. "
                         f"Shareholder rewards: {describe_reward_details(reward_details)} "
@@ -2277,7 +2352,12 @@ def set_acquire_order(room_id: str):
             survivor = room.pending_acquire_survivor
             advance_acquire_step(room)
             pending = pending_acquire_state(room)
-            if pending:
+            if pending and pending["rewards"]["waiting_player_ids"]:
+                room.last_action = (
+                    f"Acquire order set: {', '.join(order)}. "
+                    f"Wait for collecting rewards: {reward_waiting_names(room)}."
+                )
+            elif pending:
                 room.last_action = (
                     f"Acquire order set: {', '.join(order)}. "
                     f"Notice, It's {pending['active_player_name']}'s turn to process the stocks!"
@@ -2293,6 +2373,60 @@ def set_acquire_order(room_id: str):
                 "set_acquire_order",
                 player_id,
                 {"order": list(order)},
+            )
+            state = build_public_room_state(room, player_id)
+            broadcast_room_state(room)
+    except RoomNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    return jsonify(state)
+
+
+@app.post("/api/rooms/<room_id>/collect_acquire_reward")
+def collect_acquire_reward(room_id: str):
+    data = request_data()
+    player_id = string_value(data.get("player_id"))
+
+    try:
+        with room_lock:
+            room = get_room_or_404(room_id)
+            totals = pending_acquire_reward_totals(room)
+            if not totals:
+                return jsonify({"error": "No Acquire rewards are waiting."}), 400
+            if player_id not in totals:
+                return jsonify({"error": "This player has no reward to collect."}), 403
+            if player_id in room.pending_acquire_reward_collected_player_ids:
+                return jsonify({"error": "This reward was already collected."}), 400
+
+            player = next((item for item in room.players if item.id == player_id), None)
+            if not player:
+                return jsonify({"error": "Player not found in this room."}), 403
+
+            amount = totals[player_id]
+            player.money += amount
+            room.pending_acquire_reward_collected_player_ids.append(player_id)
+            remaining_names = reward_waiting_names(room)
+            if remaining_names:
+                room.last_action = (
+                    f"{player.name} collected ${amount:,}. "
+                    f"Wait for collecting rewards: {remaining_names}."
+                )
+            else:
+                advance_acquire_step(room)
+                pending = pending_acquire_state(room)
+                room.last_action = f"{player.name} collected ${amount:,}. All rewards collected."
+                if pending and pending.get("active_player_name"):
+                    room.last_action += (
+                        f" Notice, It's {pending['active_player_name']}'s turn to process the stocks!"
+                    )
+                elif not room.pending_acquire_survivor:
+                    room.last_action += " Acquire finished."
+
+            record_room_event(
+                room,
+                "collect_acquire_reward",
+                player_id,
+                {"amount": amount},
             )
             state = build_public_room_state(room, player_id)
             broadcast_room_state(room)
@@ -2320,6 +2454,8 @@ def trade_stocks(room_id: str):
                 return jsonify({"error": "No Acquire trade is waiting."}), 400
             if pending.get("ordering"):
                 return jsonify({"error": "Choose the Acquire order first."}), 400
+            if pending.get("rewards", {}).get("waiting_player_ids"):
+                return jsonify({"error": "Wait for all shareholder rewards to be collected."}), 400
             if pending["active_player_id"] != player_id:
                 return jsonify({"error": "It is not your trade decision."}), 403
             if pending["active_target"] != target:

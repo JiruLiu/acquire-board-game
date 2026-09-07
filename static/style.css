@@ -979,6 +979,43 @@ button:disabled {
   width: var(--sidebar-width);
 }
 
+.action-slot-panel {
+  flex: 0 0 auto;
+  transition: padding 180ms ease, min-height 180ms ease;
+}
+
+.action-slot-panel.is-collapsed {
+  min-height: 2.05vw;
+  margin-top: 0;
+  padding-top: 0.46vw;
+  padding-bottom: 0.46vw;
+  overflow: hidden;
+}
+
+.action-slot-panel.is-collapsed > :not(:first-child) {
+  display: none !important;
+}
+
+.action-slot-panel.is-collapsed > :first-child > :not(h3) {
+  display: none !important;
+}
+
+.action-slot-panel.is-collapsed h3::after {
+  content: "+";
+  display: inline-grid;
+  width: 0.8vw;
+  height: 0.8vw;
+  margin-left: 0.4vw;
+  place-items: center;
+  border: 1px solid rgba(31, 42, 47, 0.22);
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 0.68vw;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0.82;
+}
+
 .spectator-tiles-panel {
   padding: 0.75vw 0.9vw 0.9vw;
   overflow-y: auto;
@@ -1080,12 +1117,16 @@ button:disabled {
   top: 0;
   bottom: 0;
   left: calc(50% + (var(--board-shell-width) / 2) + 1.2vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--left-panel-gap);
   width: var(--leftbar-width);
 }
 
 .status-panel,
 .found-panel,
 .acquire-order-panel,
+.acquire-rewards-panel,
 .share-panel,
 .holdings-panel,
 .buying-panel,
@@ -1114,12 +1155,17 @@ button:disabled {
   padding-right: 0.4vw;
 }
 
-.game-leftbar .status-panel {
-  position: absolute;
-  top: calc(var(--buying-panel-top) + var(--buying-panel-height) + var(--left-panel-gap));
-  bottom: 0;
-  left: 0;
-  right: 0;
+.game-leftbar .buying-panel {
+  position: static;
+  flex: 0 0 var(--buying-panel-height);
+  width: 100%;
+}
+
+.game-leftbar .share-panel {
+  position: static;
+  flex: 0 0 auto;
+  width: 100%;
+  overflow: hidden;
 }
 
 .trade-panel {
@@ -1136,12 +1182,65 @@ button:disabled {
 }
 
 .share-panel {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
   margin-top: 0;
   padding-bottom: 0.16vw;
+}
+
+.leftbar-decoration {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 1.4vw;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background:
+    radial-gradient(circle at 50% 50%, rgba(215, 140, 44, 0.3) 0 0.17vw, transparent 0.19vw),
+    linear-gradient(90deg, transparent, rgba(215, 140, 44, 0.09), transparent);
+}
+
+.leftbar-decoration::before,
+.leftbar-decoration::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 42%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(31, 42, 47, 0.2));
+}
+
+.leftbar-decoration::before { left: 0; }
+.leftbar-decoration::after { right: 0; transform: rotate(180deg); }
+
+.leftbar-decoration span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.34vw;
+  height: 0.34vw;
+  border: 1px solid rgba(215, 140, 44, 0.45);
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.leftbar-decoration span:nth-child(2) { transform: translate(-1.05vw, -50%) rotate(45deg); }
+.leftbar-decoration span:nth-child(3) { transform: translate(0.7vw, -50%) rotate(45deg); }
+.leftbar-decoration span:nth-child(4) { transform: translate(-1.9vw, -50%) rotate(45deg); }
+.leftbar-decoration span:nth-child(5) { transform: translate(1.55vw, -50%) rotate(45deg); }
+
+.game-sidebar .status-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 0;
+  overflow-y: auto;
+}
+
+.spectator-mode .game-leftbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--left-panel-gap);
+}
+
+.spectator-mode .game-leftbar .share-panel {
+  position: static;
+  overflow: visible;
 }
 
 .status-panel {
@@ -1426,6 +1525,67 @@ button:disabled {
 
 .acquire-order-panel {
   margin-top: -0.25vw;
+}
+
+.acquire-rewards-panel {
+  overflow: hidden;
+  padding-top: 0.56vw;
+  padding-bottom: 0.56vw;
+}
+
+.acquire-rewards-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.45vw;
+}
+
+.acquire-rewards-header::before,
+.share-header::before {
+  content: "";
+}
+
+.acquire-rewards-header h3,
+.share-header h3 {
+  justify-self: center;
+  text-align: center;
+}
+
+.acquire-rewards-header .collect-reward-button,
+.share-header .share-flip-button {
+  justify-self: end;
+}
+
+.collect-reward-button {
+  min-width: 4.7vw;
+  padding: 0.28vw 0.44vw;
+  background: var(--accent);
+  color: white;
+  font-size: 0.52vw;
+  font-weight: 800;
+}
+
+.acquire-rewards-list {
+  display: grid;
+  gap: 0.22vw;
+  margin-top: 0.35vw;
+}
+
+.acquire-reward-row {
+  display: grid;
+  grid-template-columns: auto 1.05fr 0.85fr 1.5fr 2fr;
+  align-items: center;
+  gap: 0.28vw;
+  padding: 0.28vw 0.32vw;
+  border-radius: 0.28vw;
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 0.74vw;
+}
+
+.acquire-reward-row > span:last-child {
+  color: var(--accent);
+  font-weight: 800;
+  text-align: right;
 }
 
 .acquire-order-button {
@@ -1935,6 +2095,123 @@ button:disabled {
   overflow: visible;
 }
 
+.share-header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.5vw;
+}
+
+.valuation-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5vw;
+}
+
+.share-flip-button {
+  padding: 0.22vw 0.4vw;
+  border: 1px solid rgba(31, 42, 47, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent);
+  font-size: 0.48vw;
+  font-weight: 800;
+}
+
+.share-panel.is-flipping .share-panel-face {
+  animation: share-panel-flip 0.42s ease;
+}
+
+@keyframes share-panel-flip {
+  0% { opacity: 0; transform: rotateY(90deg); }
+  100% { opacity: 1; transform: rotateY(0); }
+}
+
+.current-prices-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 0.72vw;
+}
+
+.current-prices-table th,
+.current-prices-table td {
+  padding: 0.36vw 0.18vw;
+  border-bottom: 1px solid rgba(31, 42, 47, 0.08);
+  text-align: center;
+}
+
+.current-prices-table th {
+  color: var(--muted);
+  font-size: 0.48vw;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.current-prices-table td:first-child {
+  display: flex;
+  align-items: center;
+  gap: 0.35vw;
+  text-align: left;
+  font-weight: 800;
+}
+
+.current-price-row.is-disabled {
+  opacity: 0.3;
+  filter: grayscale(1);
+}
+
+.valuation-panel {
+  padding: 0.55vw;
+}
+
+.valuation-header h3 {
+  margin: 0;
+  font-size: 0.72vw;
+}
+
+.valuation-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 0.35vw;
+  overflow: visible;
+}
+
+.valuation-chart text {
+  fill: var(--muted);
+  font-family: "Trebuchet MS", "Gill Sans", sans-serif;
+  font-size: 16px;
+}
+
+.chart-axis {
+  stroke: rgba(31, 42, 47, 0.24);
+  stroke-width: 1.5;
+}
+
+.valuation-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25vw 0.55vw;
+  margin-top: 0.2vw;
+  font-size: 0.5vw;
+  font-weight: 700;
+}
+
+.valuation-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18vw;
+}
+
+.valuation-legend i {
+  width: 0.45vw;
+  height: 0.14vw;
+  border-radius: 999px;
+  background: var(--series-color);
+}
+
 .share-table,
 .holdings-table {
   width: 100%;
@@ -2030,7 +2307,7 @@ button:disabled {
 }
 
 .bank-stock-availability {
-  font-size: 0.68vw;
+  font-size: 1em;
 }
 
 .bank-stock-size {
@@ -2169,7 +2446,7 @@ button:disabled {
   }
 
   body[data-game-mode="classic"] .bank-stock-availability {
-    font-size: 0.62vw;
+    font-size: 1em;
   }
 
   body[data-game-mode="classic"] .bank-stock-size,
@@ -2390,7 +2667,7 @@ button:disabled {
     position: static;
   }
 
-  .share-panel {
+  .game-leftbar .share-panel {
     position: static;
   }
 
@@ -2399,7 +2676,7 @@ button:disabled {
   }
 
   .game-leftbar .buying-panel,
-  .game-leftbar .status-panel,
+  .game-leftbar .share-panel,
   .trade-panel {
     position: static;
     margin-top: 12px;
@@ -2470,9 +2747,14 @@ button:disabled {
   .share-header h3,
   .found-company-header h3,
   .acquire-order-header h3,
+  .acquire-rewards-header h3,
   .buying-header h3,
   .trade-header h3 {
     font-size: clamp(0.9rem, 2.8vw, 1.1rem);
+  }
+
+  .acquire-reward-row {
+    font-size: clamp(0.72rem, 2.16vw, 0.9rem);
   }
 
   .buying-count,

@@ -20,6 +20,7 @@ const state = {
   spectatorTilesSorted: false,
   spectatorCheckedTile: null,
   spectatorHoveredPlayerId: null,
+  showCurrentPrices: false,
   replayGame: null,
   replayActions: [],
   replayIndex: 0,
@@ -30,7 +31,10 @@ const state = {
 const socket = isReplay ? null : io();
 
 const elements = {
+  gameSidebar: document.getElementById("game-sidebar"),
+  gameLeftbar: document.getElementById("game-leftbar"),
   status: document.getElementById("status"),
+  statusPanel: document.getElementById("status-panel"),
   gameModeBadge: document.getElementById("game-mode-badge"),
   actionPromptLeft: document.getElementById("action-prompt-left"),
   actionPromptRight: document.getElementById("action-prompt-right"),
@@ -40,6 +44,14 @@ const elements = {
   sortTilesButton: document.getElementById("sort-tiles-button"),
   finishButton: document.getElementById("finish-button"),
   holdingsBody: document.getElementById("holdings-body"),
+  sharePanel: document.querySelector(".share-panel"),
+  sharePanelTitle: document.getElementById("share-panel-title"),
+  shareFlipButton: document.getElementById("share-flip-button"),
+  shareReferenceView: document.getElementById("share-reference-view"),
+  currentPricesView: document.getElementById("current-prices-view"),
+  currentPricesBody: document.getElementById("current-prices-body"),
+  valuationPanel: document.getElementById("valuation-panel"),
+  valuationChart: document.getElementById("valuation-chart"),
   copyLinkButton: document.getElementById("copy-link-button"),
   buyingPanel: document.getElementById("buying-panel"),
   buyingOptions: document.getElementById("buying-options"),
@@ -71,6 +83,10 @@ const elements = {
   acquireOrderNote: document.getElementById("acquire-order-note"),
   acquireSurvivorList: document.getElementById("acquire-survivor-list"),
   acquireOrderList: document.getElementById("acquire-order-list"),
+  acquireRewardsPanel: document.getElementById("acquire-rewards-panel"),
+  acquireRewardsNote: document.getElementById("acquire-rewards-note"),
+  acquireRewardsList: document.getElementById("acquire-rewards-list"),
+  collectRewardButton: document.getElementById("collect-reward-button"),
   endingPanel: document.getElementById("ending-panel"),
   endingWinner: document.getElementById("ending-winner"),
   endingRankings: document.getElementById("ending-rankings"),
@@ -89,7 +105,29 @@ const elements = {
   replayEvent: document.getElementById("replay-event"),
 };
 
+elements.gameSidebar.appendChild(elements.statusPanel);
+elements.gameLeftbar.appendChild(elements.sharePanel);
+
 let audioContext = null;
+const soundLibrary = {
+  placeTile: new Audio("/static/sounds/place-tiles.mp3"),
+  foundCompany: new Audio("/static/sounds/found-company.mp3"),
+  spendMoney: new Audio("/static/sounds/money-spend.mp3"),
+  getMoney: new Audio("/static/sounds/get-money.mp3"),
+  acquireHappens: new Audio("/static/sounds/acquire-happens.mp3"),
+};
+
+for (const sound of Object.values(soundLibrary)) {
+  sound.preload = "auto";
+}
+
+function playAudioAsset(name) {
+  const source = soundLibrary[name];
+  if (!source) return;
+  const sound = source.cloneNode();
+  sound.volume = 0.72;
+  sound.play().catch(() => {});
+}
 
 function getAudioContext() {
   if (audioContext) {
@@ -152,63 +190,11 @@ function playSound(recipe) {
 }
 
 function playCoinDropSound() {
-  playSound((context, start) => {
-    scheduleTone(context, {
-      type: "triangle",
-      frequency: 2450,
-      endFrequency: 1650,
-      start,
-      duration: 0.11,
-      gain: 0.045,
-      attack: 0.002,
-      release: 0.12,
-    });
-    scheduleTone(context, {
-      type: "sine",
-      frequency: 3650,
-      endFrequency: 2750,
-      start: start + 0.008,
-      duration: 0.08,
-      gain: 0.026,
-      attack: 0.002,
-      release: 0.11,
-    });
-    scheduleTone(context, {
-      type: "sine",
-      frequency: 980,
-      endFrequency: 720,
-      start: start + 0.025,
-      duration: 0.1,
-      gain: 0.035,
-      attack: 0.002,
-      release: 0.1,
-    });
-  });
+  playAudioAsset("spendMoney");
 }
 
 function playTilePlaceSound() {
-  playSound((context, start) => {
-    scheduleTone(context, {
-      type: "triangle",
-      frequency: 260,
-      endFrequency: 180,
-      start,
-      duration: 0.08,
-      gain: 0.04,
-      attack: 0.003,
-      release: 0.045,
-    });
-    scheduleTone(context, {
-      type: "sine",
-      frequency: 460,
-      endFrequency: 360,
-      start: start + 0.035,
-      duration: 0.07,
-      gain: 0.025,
-      attack: 0.003,
-      release: 0.04,
-    });
-  });
+  playAudioAsset("placeTile");
 }
 
 function playMoneyIncomingSound() {
@@ -247,56 +233,11 @@ function playMoneyIncomingSound() {
 }
 
 function playCelebrateSound() {
-  playSound((context, start) => {
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    for (const [index, note] of notes.entries()) {
-      scheduleTone(context, {
-        type: "triangle",
-        frequency: note,
-        endFrequency: note * 1.02,
-        start: start + (index * 0.06),
-        duration: 0.16,
-        gain: 0.04,
-        attack: 0.005,
-        release: 0.08,
-      });
-    }
-  });
+  playAudioAsset("foundCompany");
 }
 
 function playAcquireImpactSound() {
-  playSound((context, start) => {
-    scheduleTone(context, {
-      type: "sawtooth",
-      frequency: 180,
-      endFrequency: 72,
-      start,
-      duration: 0.34,
-      gain: 0.05,
-      attack: 0.01,
-      release: 0.12,
-    });
-    scheduleTone(context, {
-      type: "triangle",
-      frequency: 260,
-      endFrequency: 510,
-      start: start + 0.06,
-      duration: 0.24,
-      gain: 0.028,
-      attack: 0.01,
-      release: 0.1,
-    });
-    scheduleTone(context, {
-      type: "sine",
-      frequency: 510,
-      endFrequency: 760,
-      start: start + 0.13,
-      duration: 0.22,
-      gain: 0.026,
-      attack: 0.01,
-      release: 0.1,
-    });
-  });
+  playAudioAsset("acquireHappens");
 }
 
 function escapeHtml(value) {
@@ -764,12 +705,6 @@ function playRoomEventSounds(previousState, nextState) {
     playCoinDropSound();
   }
 
-  if (
-    nextState.last_action?.includes("shareholder reward")
-    && anyPlayerMoneyIncreased(previousState, nextState)
-  ) {
-    playMoneyIncomingSound();
-  }
 }
 
 function applyRoomState(nextState, fallbackMessage = "Connected.") {
@@ -913,6 +848,83 @@ function renderHoldings() {
     ${bankStockCells}
   `;
   elements.holdingsBody.appendChild(bankRow);
+}
+
+function tilesToNextPrice(size) {
+  const thresholds = [3, 4, 5, 6, 11, 21, 31, 41];
+  const next = thresholds.find((threshold) => threshold > size);
+  return next ? String(next - size) : "Max";
+}
+
+function renderCurrentPrices() {
+  const companiesFound = state.roomState?.companies_found || {};
+  const companySizes = state.roomState?.company_sizes || {};
+  const sharePrices = state.roomState?.share_prices || {};
+  elements.currentPricesBody.innerHTML = STOCK_COLORS.map((color) => {
+    const founded = !!companiesFound[color];
+    const size = companySizes[color] || 0;
+    return `
+      <tr class="current-price-row${founded ? "" : " is-disabled"}">
+        <td><span class="dot ${color}"></span><span>${color[0].toUpperCase()}${color.slice(1)}</span></td>
+        <td>${founded ? size : "—"}</td>
+        <td>${founded ? tilesToNextPrice(size) : "—"}</td>
+        <td>${founded ? formatMoney(sharePrices[color] || 0) : "—"}</td>
+      </tr>`;
+  }).join("");
+}
+
+function renderSharePanel() {
+  renderCurrentPrices();
+  elements.shareReferenceView.hidden = state.showCurrentPrices;
+  elements.currentPricesView.hidden = !state.showCurrentPrices;
+  elements.sharePanelTitle.textContent = state.showCurrentPrices ? "Current Prices" : "Share & Prices";
+  elements.shareFlipButton.textContent = state.showCurrentPrices ? "Price Chart" : "Current Prices";
+  elements.shareFlipButton.setAttribute("aria-pressed", String(state.showCurrentPrices));
+}
+
+function renderValuationChart() {
+  const isSpectator = !!state.roomState?.is_spectator;
+  elements.valuationPanel.hidden = !isSpectator;
+  if (!isSpectator) return;
+  const history = state.roomState?.valuation_history || [];
+  if (!history.length) {
+    elements.valuationChart.innerHTML = '<p class="panel-note">No operations recorded yet.</p>';
+    return;
+  }
+  const players = state.roomState?.players || [];
+  const width = 620;
+  const height = 220;
+  const pad = { left: 55, right: 14, top: 14, bottom: 30 };
+  const values = history.flatMap((point) => point.players.map((player) => player.money));
+  const rawMinValue = Math.min(...values);
+  const rawMaxValue = Math.max(...values);
+  const padding = Math.max(100, (rawMaxValue - rawMinValue) * 0.08);
+  const minValue = Math.max(0, rawMinValue - padding);
+  const maxValue = rawMaxValue + padding;
+  const valueSpan = maxValue - minValue;
+  const x = (index) => pad.left + (index / Math.max(1, history.length - 1)) * (width - pad.left - pad.right);
+  const y = (value) => pad.top + ((maxValue - value) / valueSpan) * (height - pad.top - pad.bottom);
+  const colors = { red: "#d96b63", yellow: "#c79c20", green: "#6faf7a", pink: "#e27e98", purple: "#9b7ac3", orange: "#d9904f", blue: "#6f9fd8" };
+  const palette = Object.values(colors);
+  const lines = players.map((player, playerIndex) => {
+    const points = history.map((point, index) => {
+      const value = point.players.find((item) => item.player_id === player.id)?.money ?? 0;
+      return `${x(index)},${y(value)}`;
+    }).join(" ");
+    return `<polyline points="${points}" fill="none" stroke="${palette[playerIndex % palette.length]}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
+  }).join("");
+  const latestOperation = history[history.length - 1].operation;
+  elements.valuationChart.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Player overall money by operation">
+      <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" class="chart-axis"/>
+      <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="chart-axis"/>
+      ${lines}
+      <text x="${pad.left - 6}" y="${pad.top + 4}" text-anchor="end">${formatMoney(maxValue)}</text>
+      <text x="${pad.left - 6}" y="${height - pad.bottom + 4}" text-anchor="end">${formatMoney(minValue)}</text>
+      <text x="${pad.left}" y="${height - 8}" text-anchor="middle">0</text>
+      <text x="${width - pad.right}" y="${height - 8}" text-anchor="end">${latestOperation}</text>
+    </svg>
+    <div class="valuation-legend">${players.map((player, index) => `<span><i style="--series-color:${palette[index % palette.length]}"></i>${escapeHtml(player.name)}</span>`).join("")}</div>`;
 }
 
 function renderBuying() {
@@ -1176,6 +1188,57 @@ function renderAcquireOrder() {
   elements.acquireOrderButton.disabled = !(canSetSurvivor || canSetOrder);
 }
 
+function rewardRankLabel(rank) {
+  const labels = {
+    "first": "1st",
+    "second": "2nd",
+    "third": "3rd",
+    "first and third": "1st + 3rd",
+    "tied first": "Tied 1st",
+    "tied second": "Tied 2nd",
+    "tied third": "Tied 3rd",
+  };
+  return labels[rank] || rank;
+}
+
+function renderAcquireRewards() {
+  const rewards = state.roomState?.pending_acquire?.rewards || {};
+  const details = rewards.details || [];
+  const totals = rewards.totals || {};
+  const collected = new Set(rewards.collected_player_ids || []);
+  const waiting = rewards.waiting_player_ids || [];
+  const viewerAmount = totals[state.playerId] || 0;
+  const viewerCollected = collected.has(state.playerId);
+
+  elements.acquireRewardsList.innerHTML = details.length
+    ? details.map((detail) => `
+      <div class="acquire-reward-row">
+        <span class="dot ${detail.color}"></span>
+        <strong>${detail.color[0].toUpperCase()}${detail.color.slice(1)}</strong>
+        <span>${rewardRankLabel(detail.rank)}</span>
+        <span>${escapeHtml((detail.names || []).join(", "))}</span>
+        <span>${detail.names?.length > 1 ? `${formatMoney(detail.amount)} shared · ${formatMoney(detail.each)} each` : formatMoney(detail.each)}</span>
+      </div>`).join("")
+    : '<p class="panel-note">No shareholder rewards for this acquisition.</p>';
+
+  elements.acquireRewardsNote.textContent = waiting.length
+    ? `Waiting for ${waiting.length} player${waiting.length === 1 ? "" : "s"} to collect.`
+    : "All rewards collected.";
+  if (state.roomState?.is_spectator) {
+    elements.collectRewardButton.textContent = "Spectating";
+    elements.collectRewardButton.disabled = true;
+  } else if (!viewerAmount) {
+    elements.collectRewardButton.textContent = "No reward";
+    elements.collectRewardButton.disabled = true;
+  } else if (viewerCollected) {
+    elements.collectRewardButton.textContent = `Collected ${formatMoney(viewerAmount)}`;
+    elements.collectRewardButton.disabled = true;
+  } else {
+    elements.collectRewardButton.textContent = `Collect ${formatMoney(viewerAmount)}`;
+    elements.collectRewardButton.disabled = false;
+  }
+}
+
 function renderActionPanels() {
   const pending = state.roomState?.pending_acquire;
   const isTurnActive = state.roomState?.current_turn_player_id === state.playerId
@@ -1195,12 +1258,28 @@ function renderActionPanels() {
     && !pending?.ordering
     && !pending?.choosing_survivor
     && !state.roomState?.game_over;
-  const shouldPromptAction = isTurnActive || isFoundActive || isAcquireOrderActive || isTradeActive;
+  const rewardWaitingIds = pending?.rewards?.waiting_player_ids || [];
+  const isRewardActive = rewardWaitingIds.includes(state.playerId);
+  const shouldPromptAction = isTurnActive || isFoundActive || isAcquireOrderActive || isTradeActive || isRewardActive;
+
+  const hasFoundOperation = !!state.roomState?.pending_found_player_id;
+  const hasAcquireOrderOperation = !!pending?.ordering || !!pending?.choosing_survivor;
+  const hasRewardOperation = rewardWaitingIds.length > 0 && !hasAcquireOrderOperation;
+  const hasTradeOperation = !!pending && !hasAcquireOrderOperation && !hasRewardOperation;
+  elements.foundPanel.classList.toggle("is-collapsed", !hasFoundOperation);
+  elements.acquireOrderPanel.classList.toggle("is-collapsed", !hasAcquireOrderOperation);
+  elements.tradePanel.classList.toggle("is-collapsed", !hasTradeOperation);
+  elements.acquireRewardsPanel.classList.toggle("is-collapsed", !hasRewardOperation);
+  elements.foundPanel.setAttribute("aria-expanded", String(hasFoundOperation));
+  elements.acquireOrderPanel.setAttribute("aria-expanded", String(hasAcquireOrderOperation));
+  elements.tradePanel.setAttribute("aria-expanded", String(hasTradeOperation));
+  elements.acquireRewardsPanel.setAttribute("aria-expanded", String(hasRewardOperation));
 
   setPanelFocus(elements.foundPanel, isFoundActive, "found");
   setPanelFocus(elements.acquireOrderPanel, isAcquireOrderActive, "acquire");
   setPanelFocus(elements.buyingPanel, isBuyingActive, "buying");
   setPanelFocus(elements.tradePanel, isTradeActive, "trade");
+  setPanelFocus(elements.acquireRewardsPanel, isRewardActive, "acquire");
   elements.actionPromptLeft.hidden = !shouldPromptAction;
   elements.actionPromptRight.hidden = !shouldPromptAction;
 
@@ -1344,9 +1423,12 @@ function renderGame() {
   renderSpectatorPresence();
   renderEnding();
   renderHoldings();
+  renderSharePanel();
+  renderValuationChart();
   renderBuying();
   renderTrade();
   renderAcquireOrder();
+  renderAcquireRewards();
   renderCompanies();
   renderActionPanels();
   renderRack();
@@ -1526,6 +1608,22 @@ async function handleProcessTradeButton() {
   }
 }
 
+async function handleCollectRewardButton() {
+  if (elements.collectRewardButton.disabled) return;
+  elements.collectRewardButton.disabled = true;
+  try {
+    const data = await api(`/api/rooms/${state.roomId}/collect_acquire_reward`, {
+      method: "POST",
+      body: JSON.stringify({ player_id: state.playerId }),
+    });
+    playAudioAsset("getMoney");
+    applyRoomState(data, "Reward collected.");
+  } catch (error) {
+    setStatus(error.message, true);
+    renderAcquireRewards();
+  }
+}
+
 async function handleAcquireOrderButton() {
   const pending = state.roomState?.pending_acquire;
   if (!pending || pending.starter_id !== state.playerId) return;
@@ -1663,10 +1761,18 @@ elements.foundButton.addEventListener("click", handleFoundButton);
 elements.finishButton.addEventListener("click", handleFinishButton);
 elements.sortTilesButton.addEventListener("click", handleSortTilesButton);
 elements.processTradeButton.addEventListener("click", handleProcessTradeButton);
+elements.collectRewardButton.addEventListener("click", handleCollectRewardButton);
 elements.acquireOrderButton.addEventListener("click", handleAcquireOrderButton);
 elements.endingCloseButton.addEventListener("click", closeEndingPanel);
 elements.showEndingButton.addEventListener("click", showEndingPanel);
 elements.spectatorSortTiles.addEventListener("click", handleSpectatorSortTiles);
+elements.shareFlipButton.addEventListener("click", () => {
+  state.showCurrentPrices = !state.showCurrentPrices;
+  elements.sharePanel.classList.remove("is-flipping");
+  void elements.sharePanel.offsetWidth;
+  elements.sharePanel.classList.add("is-flipping");
+  renderSharePanel();
+});
 
 if (isReplay) {
   loadReplay();
