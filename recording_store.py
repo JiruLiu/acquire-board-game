@@ -49,7 +49,6 @@ def validate_snapshot_state(state: dict) -> list[str]:
 
     expected_dimensions = {
         "classic": (list("ABCDEFGHI"), [str(index) for index in range(1, 13)]),
-        "expanded": (list("ABCDEFGHIJK"), [str(index) for index in range(1, 15)]),
     }
     mode = state.get("mode")
     if mode not in expected_dimensions:
@@ -67,7 +66,6 @@ def validate_snapshot_state(state: dict) -> list[str]:
     }
     compatible_player_limits = {
         "classic": (5, 6),
-        "expanded": (8,),
     }.get(mode, ())
     compatible_rules = [
         {**expected_rule_values, "max_players": player_limit}

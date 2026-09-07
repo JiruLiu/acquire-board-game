@@ -30,18 +30,12 @@ GAME_MODES = {
         "columns": [str(i) for i in range(1, 13)],
         "max_players": 6,
     },
-    "expanded": {
-        "label": "Expanded",
-        "rows": list("ABCDEFGHIJK"),
-        "columns": [str(i) for i in range(1, 15)],
-        "max_players": 8,
-    },
 }
 DEFAULT_GAME_MODE = "classic"
 ROWS = GAME_MODES[DEFAULT_GAME_MODE]["rows"]
 COLUMNS = GAME_MODES[DEFAULT_GAME_MODE]["columns"]
 ALL_TILES = [f"{row}{column}" for row in ROWS for column in COLUMNS]
-BOARD_ROW_ORDER = GAME_MODES["expanded"]["rows"]
+BOARD_ROW_ORDER = ROWS
 STOCK_COLORS = ["red", "yellow", "green", "pink", "purple", "orange", "blue"]
 STARTING_CASH = 6000
 STARTING_BANK_SHARES = 25

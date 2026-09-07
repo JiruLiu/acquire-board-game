@@ -20,13 +20,13 @@ Current features include:
 - list active rooms and the players waiting in each room
 - validate player names as 1-10 letters or numbers
 - prevent duplicate player names within a room
-- offer Classic rooms for 2-6 players and Expanded rooms for 2-8 players
+- support rooms for 2-6 players on the original board
 - initialize games from a supplied or automatically generated reproducible seed
 - allow only the room creator to start the game
 - move players and waiting spectators to the board page after start
 - show all player tiles in a read-only spectator interface
 - show a live list of connected spectators on the board page
-- place tiles on a 9x12 Classic board or an 11x14 Expanded board
+- place tiles on the original 9x12 board
 - push room updates instantly with WebSockets
 - found companies and expand company groups
 - buy up to 3 stocks after tile placement resolves
@@ -62,16 +62,13 @@ Enter the fields on the left side of the lobby:
 1. Your player name (1-10 letters or numbers)
 2. Invitation code: `evanston`
 3. A room password of your choice
-4. A game mode:
-   - **Classic**: 2-6 players on the original 9x12 board
-   - **Expanded**: 2-8 players on an 11x14 board
-5. An optional numeric seed from `0` through `4294967295`
+4. An optional numeric seed from `0` through `4294967295`
 
-Leave the seed blank to generate one automatically. The effective seed is shown in the room card and on the game page. Using the same seed, mode, player join order, and application version reproduces the initial player order, tile racks, and remaining deck.
+Leave the seed blank to generate one automatically. The effective seed is shown in the room card and on the game page. Using the same seed, player join order, and application version reproduces the initial player order, tile racks, and remaining deck.
 
-For a visual seed check, create one room with a short seed such as `12345` and confirm the narrow seed field, room card, and game-page mode badge all show that value. Create another room with the field blank and confirm a generated seed appears instead.
+For a visual seed check, create one room with a short seed such as `12345` and confirm the narrow seed field, room card, and game-page badge all show that value. Create another room with the field blank and confirm a generated seed appears instead.
 
-Click **Create Room**. The new room appears under **Existing Rooms** with its mode, board size, and capacity. The creator cannot Join or Spectate their own room; after at least 2 players have joined, the creator clicks **Start Game**.
+Click **Create Room**. The new room appears under **Existing Rooms** with its capacity. The creator cannot Join or Spectate their own room; after at least 2 players have joined, the creator clicks **Start Game**.
 
 ### Join a room
 

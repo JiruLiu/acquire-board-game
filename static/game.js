@@ -779,10 +779,10 @@ function applyRoomState(nextState, fallbackMessage = "Connected.") {
   document.documentElement.style.setProperty("--board-columns", String(columnCount));
   document.documentElement.style.setProperty("--board-gap-count", String(columnCount - 1));
   elements.gameModeBadge.textContent = (
-    `${nextState.game_mode_label || "Classic"} · ${boardRows().length}×${columnCount} · Seed ${nextState.seed}`
+    `${boardRows().length}×${columnCount} · Seed ${nextState.seed}`
   );
   document.body.dataset.gameMode = nextState.game_mode || "classic";
-  document.title = `${isReplay ? "Acquire Replay" : "Acquire"} · ${nextState.game_mode_label || "Classic"}`;
+  document.title = isReplay ? "Acquire Replay" : "Acquire";
   if (!isReplay) {
     try {
       playRoomEventSounds(previousState, nextState);
@@ -863,18 +863,14 @@ function stockCell(stocks, color) {
   `;
 }
 
-function bankStockCell(stocks, companySizes, players, color) {
+function bankStockCell(stocks, companySizes, color) {
   const available = stocks?.[color] || 0;
-  const total = players.reduce(
-    (sum, player) => sum + (player?.stocks?.[color] || 0),
-    available,
-  );
   const size = companySizes?.[color] || 0;
   return `
-    <td class="stock-count stock-${color} is-present" title="${available} of ${total} shares available; company size ${size}">
-      <span class="bank-stock-stack" aria-label="${available} of ${total} shares available; company size ${size}">
-        <span class="bank-stock-availability">${available}/${total}</span>
-        <span class="bank-stock-size">Size ${size}</span>
+    <td class="stock-count stock-${color} is-present" title="${available} shares available; company size ${size}">
+      <span class="bank-stock-stack" aria-label="${available} shares available; company size ${size}">
+        <span class="bank-stock-availability">${available}</span>
+        <span class="bank-stock-size">${size}</span>
       </span>
     </td>
   `;
@@ -910,13 +906,10 @@ function renderHoldings() {
   const bankRow = document.createElement("tr");
   bankRow.className = "bank-row";
   const bankStockCells = STOCK_COLORS
-    .map((color) => bankStockCell(bankStocks, companySizes, players, color))
+    .map((color) => bankStockCell(bankStocks, companySizes, color))
     .join("");
   bankRow.innerHTML = `
-    <td colspan="2" class="bank-row-label">
-      <span>Shares</span>
-      <span>Available / total</span>
-    </td>
+    <td colspan="2" class="bank-row-label">Bank</td>
     ${bankStockCells}
   `;
   elements.holdingsBody.appendChild(bankRow);

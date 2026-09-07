@@ -15,7 +15,6 @@ const elements = {
   playerName: document.getElementById("player-name"),
   inviteCode: document.getElementById("invite-code"),
   roomPassword: document.getElementById("room-password"),
-  gameMode: document.getElementById("game-mode"),
   gameSeed: document.getElementById("game-seed"),
   status: document.getElementById("status"),
   createRoom: document.getElementById("create-room"),
@@ -39,7 +38,6 @@ function getInviteCode() {
 
 function setRoomEntryControlsDisabled(disabled) {
   elements.createRoom.disabled = disabled;
-  elements.gameMode.disabled = disabled;
   elements.gameSeed.disabled = disabled;
   for (const control of elements.availableRooms.querySelectorAll("button, input")) {
     control.disabled = disabled;
@@ -81,7 +79,7 @@ async function loadRooms() {
         <div class="available-room-summary">
           <strong>${room.name}</strong>
           <span class="room-player-names">${room.players.join(", ") || "No players"}</span>
-          <span>${room.game_mode_label} · ${room.board_size} · ${room.player_count}/${room.max_players} · Seed ${room.seed}</span>
+          <span>${room.player_count}/${room.max_players} players · Seed ${room.seed}</span>
           <span>${room.started ? "Game in progress" : "Waiting to start"}</span>
         </div>
         <input class="room-card-password" type="password" placeholder="Room password" maxlength="24" aria-label="Password for ${room.name}" ${roomEntryDisabled ? "disabled" : ""}>
@@ -133,7 +131,7 @@ async function loadReplays() {
       const title = document.createElement("strong");
       title.textContent = replay.room_name;
       const details = document.createElement("span");
-      details.textContent = `${replay.game_mode_label} · ${replay.action_count} actions · Seed ${replay.seed}`;
+      details.textContent = `${replay.action_count} actions · Seed ${replay.seed}`;
       const timing = document.createElement("span");
       timing.textContent = `${replay.status === "completed" ? "Completed" : "In progress"} · ${formatReplayTime(replay.updated_at)}`;
       summary.append(title, details, timing);
@@ -174,7 +172,6 @@ async function createRoom() {
   const playerName = getPlayerName();
   const invitationCode = getInviteCode();
   const roomPassword = elements.roomPassword.value.trim();
-  const gameMode = elements.gameMode.value;
   const seed = elements.gameSeed.value.trim();
 
   try {
@@ -189,7 +186,6 @@ async function createRoom() {
         player_name: playerName,
         invitation_code: invitationCode,
         room_password: roomPassword,
-        game_mode: gameMode,
         seed,
       }),
     });
@@ -197,7 +193,6 @@ async function createRoom() {
     state.playerId = data.player_id;
     state.roomState = data.state;
     state.roomEntryLocked = true;
-    elements.gameMode.disabled = true;
     elements.gameSeed.disabled = true;
     elements.roomPassword.value = roomPassword;
     setStatus(`${state.roomState.room_name} created.`);

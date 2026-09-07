@@ -92,7 +92,7 @@
 
 - [x] Validate serialized/restored snapshots for:
   - unique tiles across board, deck, and player racks
-  - valid coordinates for the selected game mode
+  - valid coordinates for the game board
   - exactly 25 total shares per company across bank and players
   - valid current-turn index and pending-action player IDs
   - founded companies matching board company usage

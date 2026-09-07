@@ -2177,43 +2177,6 @@ button:disabled {
     font-size: 0.42vw;
   }
 
-  body[data-game-mode="expanded"] .holdings-panel {
-    padding-top: 0.45vw;
-    padding-bottom: 0.35vw;
-  }
-
-  body[data-game-mode="expanded"] .holdings-header {
-    min-height: 1vw;
-  }
-
-  body[data-game-mode="expanded"] .holdings-header h3 {
-    margin-top: 0;
-    font-size: 0.84vw;
-  }
-
-  body[data-game-mode="expanded"] .holdings-table {
-    font-size: 0.68vw;
-    line-height: 1.05;
-  }
-
-  body[data-game-mode="expanded"] .holdings-table th {
-    font-size: 0.56vw;
-  }
-
-  body[data-game-mode="expanded"] .holdings-table th,
-  body[data-game-mode="expanded"] .holdings-table td {
-    padding-top: 0.07vw;
-    padding-bottom: 0.07vw;
-  }
-
-  body[data-game-mode="expanded"] .bank-stock-availability {
-    font-size: 0.56vw;
-  }
-
-  body[data-game-mode="expanded"] .bank-stock-size,
-  body[data-game-mode="expanded"] .bank-row-label span:last-child {
-    font-size: 0.4vw;
-  }
 }
 
 .share-table th .legend-group {
