@@ -772,11 +772,12 @@ function stockCell(stocks, color) {
 function bankStockCell(stocks, companySizes, color) {
   const available = stocks?.[color] || 0;
   const size = companySizes?.[color] || 0;
+  const companySizeDescription = size ? `; company size ${size}` : "";
   return `
-    <td class="stock-count stock-${color} is-present" title="${available} shares available; company size ${size}">
-      <span class="bank-stock-stack" aria-label="${available} shares available; company size ${size}">
+    <td class="stock-count stock-${color} is-present" title="${available} shares available${companySizeDescription}">
+      <span class="bank-stock-stack" aria-label="${available} shares available${companySizeDescription}">
         <span class="bank-stock-availability">${available}</span>
-        <span class="bank-stock-size">${size}</span>
+        ${size ? `<span class="bank-stock-size">${size}</span>` : ""}
       </span>
     </td>
   `;

@@ -1061,17 +1061,36 @@ def build_final_rankings(room: Room) -> list[dict]:
     return rankings
 
 
+def current_asset_breakdowns(room: Room) -> dict[str, dict[str, int]]:
+    prices = share_prices(room)
+    _reward_details, reward_totals = final_shareholder_rewards(room)
+    breakdowns = {}
+    for player in room.players:
+        stock_sale_value = sum(
+            player.stocks.get(color, 0) * (prices.get(color) or 0)
+            for color in STOCK_COLORS
+        )
+        shareholder_rewards = reward_totals.get(player.id, 0)
+        breakdowns[player.id] = {
+            "cash": player.money,
+            "stock_sale_value": stock_sale_value,
+            "shareholder_rewards": shareholder_rewards,
+            "assets": player.money + stock_sale_value + shareholder_rewards,
+        }
+    return breakdowns
+
+
 def append_valuation_point(room: Room) -> None:
-    rankings = build_final_rankings(room)
+    breakdowns = current_asset_breakdowns(room)
     room.valuation_history.append({
         "round": len(room.valuation_history),
         "players": [
             {
-                "player_id": item["player_id"],
-                "name": item["name"],
-                "assets": item["final_total"],
+                "player_id": player.id,
+                "name": player.name,
+                **breakdowns[player.id],
             }
-            for item in rankings
+            for player in room.players
         ],
     })
 

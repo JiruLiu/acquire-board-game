@@ -65,51 +65,66 @@ class GameRegressionTests(unittest.TestCase):
     def test_current_asset_history_includes_cash_stock_value_and_current_rewards(self):
         player = Player(id="asset-player", name="Assets", money=5000)
         player.stocks["red"] = 3
+        player.stocks["orange"] = 1
         room = Room(
             id="ASSETS",
             name="Assets",
             password="pw",
             creator_id=player.id,
             players=[player],
-            companies_found={color: color == "red" for color in app_module.STOCK_COLORS},
+            companies_found={
+                color: color in {"red", "orange"}
+                for color in app_module.STOCK_COLORS
+            },
             board={
                 "A1": {"placed_by": player.id, "company": "red"},
                 "A2": {"placed_by": player.id, "company": "red"},
+                "B1": {"placed_by": player.id, "company": "orange"},
+                "B2": {"placed_by": player.id, "company": "orange"},
             },
         )
 
         app_module.append_valuation_point(room)
 
-        # Red is worth $200 at size 2: $600 stock value plus the sole
-        # shareholder's $3,000 first-and-third reward, on top of $5,000 cash.
+        # If every active company were acquired now, red contributes $600 in
+        # stock sales plus $3,000 in rewards, and orange contributes $400 in
+        # stock sales plus $6,000 in rewards, on top of $5,000 cash.
         self.assertEqual(room.valuation_history, [{
             "round": 0,
             "players": [{
                 "player_id": player.id,
                 "name": player.name,
-                "assets": 8600,
+                "cash": 5000,
+                "stock_sale_value": 1000,
+                "shareholder_rewards": 9000,
+                "assets": 15000,
             }],
         }])
 
     def test_current_asset_history_advances_only_after_last_player_finishes(self):
-        first = Player(id="first", name="First", tiles=["A1"])
-        last = Player(id="last", name="Last", tiles=["B1"])
+        players = [
+            Player(id=f"player-{index}", name=f"Player{index}", tiles=[f"{row}1"])
+            for index, row in enumerate("ABCDE", start=1)
+        ]
         room = Room(
             id="ROUNDS",
             name="Rounds",
             password="pw",
-            creator_id=first.id,
-            players=[first, last],
+            creator_id=players[0].id,
+            players=players,
             started=True,
-            pending_finish_player_id=first.id,
+            pending_finish_player_id=players[0].id,
         )
         app_module.append_valuation_point(room)
 
-        app_module.complete_current_turn(room, first, first.id)
-        self.assertEqual([point["round"] for point in room.valuation_history], [0])
+        for player in players[:-1]:
+            room.pending_finish_player_id = player.id
+            app_module.complete_current_turn(room, player, player.id)
+            self.assertEqual([point["round"] for point in room.valuation_history], [0])
 
-        room.pending_finish_player_id = last.id
-        app_module.complete_current_turn(room, last, last.id)
+        last_player = players[-1]
+        room.pending_finish_player_id = last_player.id
+        app_module.complete_current_turn(room, last_player, last_player.id)
         self.assertEqual([point["round"] for point in room.valuation_history], [0, 1])
 
     def test_expanded_mode_uses_11_by_14_board(self):

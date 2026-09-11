@@ -2326,7 +2326,7 @@ button:disabled {
 }
 
 .player-name-cell {
-  font-size: 0.9em;
+  font-size: 1em;
 }
 
 .money-cell {
@@ -2469,8 +2469,8 @@ button:disabled {
   }
 
   body[data-game-mode="classic"] .holdings-table {
-    font-size: 0.82vw;
-    line-height: 1.1;
+    font-size: 1vw;
+    line-height: 1.2;
   }
 
   body[data-game-mode="classic"] .holdings-table th {
@@ -2479,8 +2479,8 @@ button:disabled {
 
   body[data-game-mode="classic"] .holdings-table th,
   body[data-game-mode="classic"] .holdings-table td {
-    padding-top: 0.14vw;
-    padding-bottom: 0.14vw;
+    padding-top: 0.2vw;
+    padding-bottom: 0.2vw;
   }
 
   body[data-game-mode="classic"] .bank-stock-availability {
@@ -2489,7 +2489,7 @@ button:disabled {
 
   body[data-game-mode="classic"] .bank-stock-size,
   body[data-game-mode="classic"] .bank-row-label span:last-child {
-    font-size: 0.42vw;
+    font-size: 0.58vw;
   }
 
 }
