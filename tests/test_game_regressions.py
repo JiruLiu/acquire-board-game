@@ -62,6 +62,56 @@ class GameRegressionTests(unittest.TestCase):
         rooms[room_id] = room
         return room, player
 
+    def test_current_asset_history_includes_cash_stock_value_and_current_rewards(self):
+        player = Player(id="asset-player", name="Assets", money=5000)
+        player.stocks["red"] = 3
+        room = Room(
+            id="ASSETS",
+            name="Assets",
+            password="pw",
+            creator_id=player.id,
+            players=[player],
+            companies_found={color: color == "red" for color in app_module.STOCK_COLORS},
+            board={
+                "A1": {"placed_by": player.id, "company": "red"},
+                "A2": {"placed_by": player.id, "company": "red"},
+            },
+        )
+
+        app_module.append_valuation_point(room)
+
+        # Red is worth $200 at size 2: $600 stock value plus the sole
+        # shareholder's $3,000 first-and-third reward, on top of $5,000 cash.
+        self.assertEqual(room.valuation_history, [{
+            "round": 0,
+            "players": [{
+                "player_id": player.id,
+                "name": player.name,
+                "assets": 8600,
+            }],
+        }])
+
+    def test_current_asset_history_advances_only_after_last_player_finishes(self):
+        first = Player(id="first", name="First", tiles=["A1"])
+        last = Player(id="last", name="Last", tiles=["B1"])
+        room = Room(
+            id="ROUNDS",
+            name="Rounds",
+            password="pw",
+            creator_id=first.id,
+            players=[first, last],
+            started=True,
+            pending_finish_player_id=first.id,
+        )
+        app_module.append_valuation_point(room)
+
+        app_module.complete_current_turn(room, first, first.id)
+        self.assertEqual([point["round"] for point in room.valuation_history], [0])
+
+        room.pending_finish_player_id = last.id
+        app_module.complete_current_turn(room, last, last.id)
+        self.assertEqual([point["round"] for point in room.valuation_history], [0, 1])
+
     def test_expanded_mode_uses_11_by_14_board(self):
         room, player = self.make_room(mode="expanded")
         state = build_public_room_state(room, player.id)

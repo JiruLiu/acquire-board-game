@@ -32,10 +32,16 @@
         <aside id="game-sidebar" class="game-sidebar">
           <section id="spectator-tiles-panel" class="panel spectator-tiles-panel" hidden>
             <div class="spectator-tiles-header">
-              <h3>Players' Tiles</h3>
+              <h3>Players &amp; Tiles</h3>
               <button id="spectator-sort-tiles" class="spectator-sort-tiles" type="button">Sort</button>
             </div>
             <div id="spectator-tiles" class="spectator-tiles"></div>
+          </section>
+          <section id="valuation-panel" class="panel valuation-panel" hidden>
+            <div class="valuation-header">
+              <h3>Current Assets vs Rounds</h3>
+            </div>
+            <div id="valuation-chart" class="valuation-chart"></div>
           </section>
           <section id="found-panel" class="panel found-panel action-slot-panel is-collapsed" aria-expanded="false">
             <div class="found-company-header">
@@ -210,13 +216,6 @@
                 <tbody id="holdings-body"></tbody>
               </table>
             </div>
-          </section>
-
-          <section id="valuation-panel" class="panel valuation-panel" hidden>
-            <div class="valuation-header">
-              <h3>Overall Money vs Operations</h3>
-            </div>
-            <div id="valuation-chart" class="valuation-chart"></div>
           </section>
 
           <section id="buying-panel" class="panel buying-panel">

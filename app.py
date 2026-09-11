@@ -173,6 +173,7 @@ def serialize_room(room: Room) -> dict:
         "seed": room.seed,
         "recording_id": room.recording_id,
         "recording_sequence": room.recording_sequence,
+        "valuation_history": copy.deepcopy(room.valuation_history),
         "board_rows": mode["rows"],
         "board_columns": mode["columns"],
         "rules": {
@@ -245,6 +246,7 @@ def deserialize_room(state: dict, password: str = "") -> Room:
         seed=state["seed"],
         recording_id=state.get("recording_id"),
         recording_sequence=state.get("recording_sequence"),
+        valuation_history=copy.deepcopy(state.get("valuation_history") or []),
         players=players,
         spectator_ids=set(state.get("spectator_ids") or []),
         spectator_names=dict(state.get("spectator_names") or {}),
@@ -302,6 +304,8 @@ def start_room_recording(
     event_type: str = "start_game",
     event_input: dict | None = None,
 ) -> None:
+    if not room.valuation_history:
+        append_valuation_point(room)
     room.recording_id = new_recording_id()
     room.recording_sequence = 0
     state = serialize_room(room)
@@ -328,7 +332,6 @@ def start_room_recording(
             if candidate.recording_id in pruned_ids:
                 candidate.recording_id = None
                 candidate.recording_sequence = None
-        append_valuation_point(room)
     except Exception:
         app.logger.exception("Could not start recording for room %s", room.id)
         room.recording_id = None
@@ -363,7 +366,6 @@ def record_room_event(
             room.recording_sequence = None
         else:
             room.recording_sequence = sequence
-            append_valuation_point(room)
     except Exception:
         app.logger.exception(
             "Could not record %s for room %s", event_type, room.id
@@ -834,6 +836,7 @@ def complete_current_turn(
     automatic_reason: str | None = None,
 ) -> None:
     clean_purchases = clean_purchases or {}
+    completed_round = bool(room.players) and room.current_turn == len(room.players) - 1
     finish_wording = (
         "automatically finished their turn"
         if automatic_reason
@@ -892,6 +895,8 @@ def complete_current_turn(
     if automatic_reason:
         event_type = "auto_finish_turn"
         event_input["reason"] = automatic_reason
+    if completed_round:
+        append_valuation_point(room)
     record_room_event(room, event_type, player_id, event_input)
 
 
@@ -1057,16 +1062,14 @@ def build_final_rankings(room: Room) -> list[dict]:
 
 
 def append_valuation_point(room: Room) -> None:
-    if room.recording_sequence is None:
-        return
     rankings = build_final_rankings(room)
     room.valuation_history.append({
-        "operation": room.recording_sequence,
+        "round": len(room.valuation_history),
         "players": [
             {
                 "player_id": item["player_id"],
                 "name": item["name"],
-                "money": item["final_total"],
+                "assets": item["final_total"],
             }
             for item in rankings
         ],
@@ -1834,6 +1837,7 @@ def start_room(room_id: str):
             room.end_pending = False
             room.game_over = False
             room.final_rankings = []
+            room.valuation_history = []
             room.current_turn = 0
             room.winner = None
             room.last_placed_tile = None

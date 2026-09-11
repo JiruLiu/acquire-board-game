@@ -19,7 +19,7 @@ const state = {
   endingClosed: false,
   spectatorTilesSorted: false,
   spectatorCheckedTile: null,
-  spectatorHoveredPlayerId: null,
+  spectatorHighlightedPlayerId: null,
   showCurrentPrices: false,
   replayGame: null,
   replayActions: [],
@@ -374,7 +374,7 @@ async function loadReplaySnapshot(index) {
     state.endingClosed = false;
     state.selectedTile = null;
     state.spectatorCheckedTile = null;
-    state.spectatorHoveredPlayerId = null;
+    state.spectatorHighlightedPlayerId = null;
     applyRoomState(data.state, replayEventLabel(action.event_type));
     prefetchReplaySnapshot(index + 1);
     prefetchReplaySnapshot(index - 1);
@@ -574,10 +574,10 @@ function renderBoard() {
   elements.board.innerHTML = "";
   const boardData = state.roomState?.board || {};
   const lastPlacedTile = state.roomState?.last_placed_tile;
-  const hoveredPlayer = state.roomState?.is_spectator
-    ? state.roomState.players?.find((player) => player.id === state.spectatorHoveredPlayerId)
+  const highlightedPlayer = state.roomState?.is_spectator
+    ? state.roomState.players?.find((player) => player.id === state.spectatorHighlightedPlayerId)
     : null;
-  const hoveredPlayerTiles = new Set((hoveredPlayer?.tiles || []).filter(Boolean));
+  const highlightedPlayerTiles = new Set((highlightedPlayer?.tiles || []).filter(Boolean));
   const ownedTiles = new Set(
     (state.roomState?.players || []).flatMap((player) => player.tiles || []).filter(Boolean),
   );
@@ -595,7 +595,7 @@ function renderBoard() {
       if (tile === state.spectatorCheckedTile) {
         button.classList.add("checked-owned-tile");
       }
-      if (hoveredPlayerTiles.has(tile)) {
+      if (highlightedPlayerTiles.has(tile)) {
         button.classList.add("spectator-player-tile-highlight");
       }
 
@@ -762,35 +762,6 @@ function displayPlayerName(name) {
   return String(name).slice(0, 8);
 }
 
-function updateSpectatorPlayerHoverClasses() {
-  document.querySelectorAll("[data-spectator-player-id]").forEach((element) => {
-    element.classList.toggle(
-      "is-tile-hovered",
-      element.dataset.spectatorPlayerId === state.spectatorHoveredPlayerId,
-    );
-  });
-}
-
-function setSpectatorHoveredPlayer(playerId) {
-  if (!state.roomState?.is_spectator) return;
-  state.spectatorHoveredPlayerId = playerId;
-  updateSpectatorPlayerHoverClasses();
-  renderBoard();
-}
-
-function enableSpectatorPlayerHover(element, player) {
-  if (!state.roomState?.is_spectator || !player) return;
-  element.classList.add("spectator-player-name-target");
-  element.classList.toggle("is-tile-hovered", player.id === state.spectatorHoveredPlayerId);
-  element.dataset.spectatorPlayerId = player.id;
-  element.title = `Highlight ${player.name}'s tiles on the board`;
-  element.tabIndex = 0;
-  element.addEventListener("mouseenter", () => setSpectatorHoveredPlayer(player.id));
-  element.addEventListener("mouseleave", () => setSpectatorHoveredPlayer(null));
-  element.addEventListener("focus", () => setSpectatorHoveredPlayer(player.id));
-  element.addEventListener("blur", () => setSpectatorHoveredPlayer(null));
-}
-
 function stockCell(stocks, color) {
   const count = stocks?.[color] || 0;
   return `
@@ -834,7 +805,6 @@ function renderHoldings() {
       <td class="money-cell">${player ? formatMoney(player.money) : ""}</td>
       ${stockCells}
     `;
-    enableSpectatorPlayerHover(row.querySelector(".player-name-cell"), player);
     elements.holdingsBody.appendChild(row);
   }
 
@@ -888,14 +858,15 @@ function renderValuationChart() {
   if (!isSpectator) return;
   const history = state.roomState?.valuation_history || [];
   if (!history.length) {
-    elements.valuationChart.innerHTML = '<p class="panel-note">No operations recorded yet.</p>';
+    elements.valuationChart.innerHTML = '<p class="panel-note">No completed rounds yet.</p>';
     return;
   }
   const players = state.roomState?.players || [];
   const width = 620;
   const height = 220;
   const pad = { left: 55, right: 14, top: 14, bottom: 30 };
-  const values = history.flatMap((point) => point.players.map((player) => player.money));
+  const assetValue = (player) => player.assets ?? player.money ?? 0;
+  const values = history.flatMap((point) => point.players.map(assetValue));
   const rawMinValue = Math.min(...values);
   const rawMaxValue = Math.max(...values);
   const padding = Math.max(100, (rawMaxValue - rawMinValue) * 0.08);
@@ -908,21 +879,21 @@ function renderValuationChart() {
   const palette = Object.values(colors);
   const lines = players.map((player, playerIndex) => {
     const points = history.map((point, index) => {
-      const value = point.players.find((item) => item.player_id === player.id)?.money ?? 0;
+      const value = assetValue(point.players.find((item) => item.player_id === player.id) || {});
       return `${x(index)},${y(value)}`;
     }).join(" ");
     return `<polyline points="${points}" fill="none" stroke="${palette[playerIndex % palette.length]}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`;
   }).join("");
-  const latestOperation = history[history.length - 1].operation;
+  const latestRound = history[history.length - 1].round ?? history.length - 1;
   elements.valuationChart.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Player overall money by operation">
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Player current assets by completed round">
       <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${height - pad.bottom}" class="chart-axis"/>
       <line x1="${pad.left}" y1="${height - pad.bottom}" x2="${width - pad.right}" y2="${height - pad.bottom}" class="chart-axis"/>
       ${lines}
       <text x="${pad.left - 6}" y="${pad.top + 4}" text-anchor="end">${formatMoney(maxValue)}</text>
       <text x="${pad.left - 6}" y="${height - pad.bottom + 4}" text-anchor="end">${formatMoney(minValue)}</text>
       <text x="${pad.left}" y="${height - 8}" text-anchor="middle">0</text>
-      <text x="${width - pad.right}" y="${height - 8}" text-anchor="end">${latestOperation}</text>
+      <text x="${width - pad.right}" y="${height - 8}" text-anchor="end">${latestRound}</text>
     </svg>
     <div class="valuation-legend">${players.map((player, index) => `<span><i style="--series-color:${palette[index % palette.length]}"></i>${escapeHtml(player.name)}</span>`).join("")}</div>`;
 }
@@ -1450,15 +1421,15 @@ function renderSpectatorMode() {
   document.body.classList.toggle("spectator-mode", isSpectator);
   elements.spectatorTilesPanel.hidden = !isSpectator;
   if (!isSpectator) {
-    state.spectatorHoveredPlayerId = null;
+    state.spectatorHighlightedPlayerId = null;
     return;
   }
 
-  const hoveredPlayerStillExists = (state.roomState.players || []).some(
-    (player) => player.id === state.spectatorHoveredPlayerId,
+  const highlightedPlayerStillExists = (state.roomState.players || []).some(
+    (player) => player.id === state.spectatorHighlightedPlayerId,
   );
-  if (!hoveredPlayerStillExists) {
-    state.spectatorHoveredPlayerId = null;
+  if (!highlightedPlayerStillExists) {
+    state.spectatorHighlightedPlayerId = null;
   }
 
   elements.spectatorTiles.innerHTML = "";
@@ -1470,16 +1441,23 @@ function renderSpectatorMode() {
       tiles.sort(compareTilesByRackOrder);
     }
     row.innerHTML = `
+      <label class="spectator-player-toggle" title="Highlight ${escapeHtml(player.name)}'s tiles on the board">
+        <input class="spectator-player-checkbox" type="checkbox" ${player.id === state.spectatorHighlightedPlayerId ? "checked" : ""}>
+        <span class="visually-hidden">Highlight ${escapeHtml(player.name)}'s tiles</span>
+      </label>
       <strong class="spectator-player-name"></strong>
       <div class="spectator-tile-list">
         ${tiles.map((tile) => `<span class="spectator-tile">${displayTile(tile)}</span>`).join("") || '<span class="panel-note">No tiles</span>'}
       </div>`;
     const playerName = row.querySelector(".spectator-player-name");
     playerName.textContent = player.name;
-    enableSpectatorPlayerHover(playerName, player);
+    row.querySelector(".spectator-player-checkbox").addEventListener("change", (event) => {
+      state.spectatorHighlightedPlayerId = event.currentTarget.checked ? player.id : null;
+      renderSpectatorMode();
+      renderBoard();
+    });
     elements.spectatorTiles.appendChild(row);
   }
-  updateSpectatorPlayerHoverClasses();
 }
 
 function handleSpectatorSortTiles() {
